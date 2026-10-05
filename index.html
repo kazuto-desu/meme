@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10151c">
+  <title>眼球トレーニング</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- ホーム -->
+  <main id="home" class="screen active">
+    <header class="hero">
+      <h1>👁 眼球トレーニング</h1>
+      <p class="lead">顔を動かさず、目だけを動かして取り組みましょう。</p>
+    </header>
+
+    <section class="settings" aria-label="設定">
+      <div class="field">
+        <span class="label">時間</span>
+        <div class="seg" data-setting="duration">
+          <button data-value="30">30秒</button>
+          <button data-value="60">1分</button>
+          <button data-value="120">2分</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">スピード</span>
+        <div class="seg" data-setting="speed">
+          <button data-value="slow">ゆっくり</button>
+          <button data-value="normal">ふつう</button>
+          <button data-value="fast">はやい</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="modes" aria-label="トレーニング">
+      <button class="card" data-mode="pursuit">
+        <span class="icon">〰️</span>
+        <span class="title">追従運動</span>
+        <span class="desc">動く点を目で追いかけます。横・縦・斜め・円・8の字。</span>
+      </button>
+      <button class="card" data-mode="saccade">
+        <span class="icon">🎯</span>
+        <span class="title">ジャンプ</span>
+        <span class="desc">ランダムに現れるターゲットを素早く見てタップ。</span>
+      </button>
+      <button class="card" data-mode="peripheral">
+        <span class="icon">✛</span>
+        <span class="title">周辺視野</span>
+        <span class="desc">中央を見たまま、一瞬光った方向を答えます。</span>
+      </button>
+      <button class="card" data-mode="relax">
+        <span class="icon">🌙</span>
+        <span class="title">リラックス</span>
+        <span class="desc">まばたき・閉眼・遠くを見るガイドで目を休めます。</span>
+      </button>
+    </section>
+
+    <section class="history" aria-label="履歴">
+      <h2>最近の記録</h2>
+      <ol id="history-list"></ol>
+      <p id="history-empty" class="muted">まだ記録はありません。</p>
+    </section>
+
+    <footer class="muted small">
+      ※ 本アプリは医療機器ではありません。目に痛みや違和感がある場合はすぐに中止し、眼科医に相談してください。
+    </footer>
+  </main>
+
+  <!-- トレーニング中 -->
+  <section id="exercise" class="screen" aria-live="polite">
+    <div class="topbar">
+      <span id="ex-title"></span>
+      <span id="ex-info"></span>
+      <span id="ex-timer">0:00</span>
+      <button id="ex-stop" class="ghost">終了</button>
+    </div>
+    <div id="hint" class="hint"></div>
+    <canvas id="stage"></canvas>
+    <div id="dir-pad" class="dir-pad hidden" aria-label="方向を答える">
+      <button data-dir="up" aria-label="上">▲</button>
+      <button data-dir="left" aria-label="左">◀</button>
+      <button data-dir="right" aria-label="右">▶</button>
+      <button data-dir="down" aria-label="下">▼</button>
+    </div>
+  </section>
+
+  <!-- 結果 -->
+  <section id="result" class="screen">
+    <div class="result-box">
+      <h2>おつかれさまでした！</h2>
+      <p id="res-title" class="muted"></p>
+      <dl id="res-stats" class="stats"></dl>
+      <p class="muted small">トレーニング後は数回まばたきをして、目を休めましょう。</p>
+      <div class="actions">
+        <button id="res-retry" class="primary">もう一度</button>
+        <button id="res-home" class="ghost">ホームへ</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

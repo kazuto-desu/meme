@@ -54,6 +54,7 @@ const SPEED = {
   pursuit: { slow: 7, normal: 4.5, fast: 2.8 },     // 1周期の秒数
   saccade: { slow: 2200, normal: 1500, fast: 1000 }, // ターゲットの制限時間 ms
   peripheral: { slow: 450, normal: 280, fast: 160 }, // 表示時間 ms
+  focus: { slow: 8, normal: 5, fast: 3 },            // 1ステップの秒数
 };
 
 const PATTERNS = [
@@ -314,10 +315,92 @@ function createRelax(env) {
   };
 }
 
+function createFocus(env) {
+  const stepSec = SPEED.focus[env.speed];
+  // 画面 → 指先（近く） → 画面 → 遠く をくり返す
+  const STEPS = [
+    { key: 'screen', text: '画面の小さな文字を見る', sub: '文字がくっきり見えるまでピントを合わせる' },
+    { key: 'near', icon: '☝️', text: '指先を見る', sub: '顔の前 約20cm に指を立てて、指先にピント' },
+    { key: 'screen', text: '画面の小さな文字を見る', sub: '文字がくっきり見えるまでピントを合わせる' },
+    { key: 'far', icon: '🏔️', text: '遠くを見る', sub: '窓の外など、できるだけ遠くにピント' },
+  ];
+  const CHARS = 'ABCDEFGHJKLMNPRSTUVWXYZ2345679';
+  let index = -1;
+  let step = STEPS[0];
+  let local = 0;
+  let switches = 0;
+  let chars = '';
+
+  function randomChars() {
+    let out = '';
+    for (let i = 0; i < 4; i++) out += CHARS[Math.floor(Math.random() * CHARS.length)];
+    return out;
+  }
+
+  return {
+    title: '遠近ピント',
+    hint: '合図に合わせて、近く・画面・遠くへピントを切り替えます',
+    info: () => step.text,
+    update(t) {
+      const i = Math.floor(t / stepSec);
+      local = t - i * stepSec;
+      if (i !== index) {
+        if (index >= 0) switches++;
+        index = i;
+        step = STEPS[i % STEPS.length];
+        if (step.key === 'screen') chars = randomChars();
+      }
+    },
+    draw(g) {
+      const cx = env.w / 2;
+      const cy = env.h / 2;
+      const ring = Math.min(env.w, env.h) * 0.32;
+      // 残り時間リング
+      g.beginPath();
+      g.arc(cx, cy, ring, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - local / stepSec));
+      g.strokeStyle = env.colors.accent;
+      g.globalAlpha = 0.5;
+      g.lineWidth = 4;
+      g.stroke();
+      g.globalAlpha = 1;
+
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      if (step.key === 'screen') {
+        // 小さめの文字をはっきり読ませる
+        g.fillStyle = env.colors.text;
+        g.font = '600 16px ui-monospace, monospace';
+        g.fillText(chars.split('').join(' '), cx, cy);
+      } else {
+        // 画面から目を離す合図：アイコンが少しずつ近づく／遠ざかる
+        const k = Math.min(1, local / 0.6);
+        const size = step.key === 'near' ? 40 + 40 * k : 80 - 30 * k;
+        g.globalAlpha = 0.85;
+        g.font = `${size}px system-ui, sans-serif`;
+        g.fillText(step.icon, cx, cy);
+        g.globalAlpha = 1;
+      }
+      g.fillStyle = env.colors.text;
+      g.font = 'bold 20px system-ui, sans-serif';
+      g.fillText(step.text, cx, cy + ring + 34);
+      g.fillStyle = env.colors.muted;
+      g.font = '14px system-ui, sans-serif';
+      g.fillText(step.sub, cx, cy + ring + 60);
+      g.textBaseline = 'alphabetic';
+    },
+    stats: () => [
+      ['ピント切り替え', `${switches}回`],
+      ['1ステップ', `${stepSec}秒`],
+    ],
+    summary: () => `切り替え ${switches}回`,
+  };
+}
+
 const MODES = {
   pursuit: createPursuit,
   saccade: createSaccade,
   peripheral: createPeripheral,
+  focus: createFocus,
   relax: createRelax,
 };
 

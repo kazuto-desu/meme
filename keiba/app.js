@@ -913,3 +913,8 @@ function init() {
 }
 
 init();
+
+// ホーム画面に追加・オフライン対応（http(s) で開いたときのみ）
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}

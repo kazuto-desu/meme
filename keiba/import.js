@@ -30,7 +30,9 @@ const KB = (() => {
 
   /** 丸数字を [[n]] に退避してから NFKC 正規化（全角英数→半角） */
   function normalize(text) {
-    let t = String(text || '').replace(/[①-⑳]/g, c => `[[${CIRCLED.indexOf(c) + 1}]]`);
+    let t = String(text || '')
+      .replace(/\[([^\]]*)\]\((?:https?:)?[^)]*\)/g, '$1') // [文字](URL) → 文字
+      .replace(/[①-⑳]/g, c => `[[${CIRCLED.indexOf(c) + 1}]]`);
     t = t.normalize('NFKC');
     return t.replace(/\r\n?/g, '\n').replace(/[ \t]+/g, ' ');
   }
@@ -183,22 +185,19 @@ const KB = (() => {
     return run;
   }
 
-  function parsePast(block, race) {
-    const body = block.body;
-    // 日付で走ごとに区切る（日付がなければ行ごと）
-    const idx = [];
-    let m;
-    DATE_RE.lastIndex = 0;
-    while ((m = DATE_RE.exec(body))) idx.push(m.index);
-    let segs;
-    if (idx.length) segs = idx.map((s, k) => body.slice(s, k + 1 < idx.length ? idx[k + 1] : undefined));
-    else segs = body.split('\n').slice(1).filter(l => /(芝|ダ)\s?\d{4}|着/.test(l));
-
-    let runs = segs.map(parseRun).filter(r => r.finish !== undefined || r.dist);
-    if (runs.every(r => r.date)) runs.sort((a, b) => b.date - a.date);
+  /**
+   * 過去走の配列（古い→新しい順、日付なしなら新しい→古いでも可）から各評価を作る
+   */
+  function summarizeRuns(runsIn, race) {
+    let runs = [...runsIn];
+    if (runs.length && runs.every(r => r.date)) runs.sort((a, b) => b.date - a.date);
+    else runs.reverse();
     runs = runs.slice(0, 10);
 
-    const out = { past: runs.map(r => ({ ...r, date: r.date ? r.date.toISOString().slice(0, 10) : null })) };
+    const out = { past: runs.map(r => {
+      const { month, day, ...rest } = r;
+      return { ...rest, date: r.date ? fmtDate(r.date) : null };
+    }) };
     if (!runs.length) return out;
 
     const fin = runs.filter(r => r.finish !== undefined);
@@ -207,10 +206,13 @@ const KB = (() => {
     const last = runs[0];
     if (last.agariRank) out.agari = last.agariRank;
     if (last.date && race.date) {
-      const d = new Date(race.date);
-      const w = Math.round((d - last.date) / (7 * 864e5));
+      const w = Math.round((new Date(race.date) - last.date) / (7 * 864e5));
       if (w >= 0 && w < 200) out.weeks = w;
     }
+
+    // スピード指数：直近3走の上位2つの平均
+    const sis = runs.slice(0, 3).map(r => r.si).filter(Boolean).sort((a, b) => b - a);
+    if (sis.length) out.si = Math.round(sis.slice(0, 2).reduce((a, b) => a + b, 0) / Math.min(2, sis.length));
 
     const rated = (list, wf) => {
       let s = 0, w = 0;
@@ -231,6 +233,25 @@ const KB = (() => {
     if (cv) out.course = cv;
     const mv = rated(runs.filter(r => ['稍重', '重', '不良'].includes(r.going)), r => (r.going === '稍重' ? 0.6 : 1));
     if (mv) out.mud = mv;
+    return out;
+  }
+
+  const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  function parsePast(block, race) {
+    const body = block.body;
+    // 日付で走ごとに区切る（日付がなければ行ごと）
+    const idx = [];
+    let m;
+    DATE_RE.lastIndex = 0;
+    while ((m = DATE_RE.exec(body))) idx.push(m.index);
+    let segs;
+    if (idx.length) segs = idx.map((s, k) => body.slice(s, k + 1 < idx.length ? idx[k + 1] : undefined));
+    else segs = body.split('\n').slice(1).filter(l => /(芝|ダ)\s?\d{4}|着/.test(l));
+
+    const runs = segs.map(parseRun).filter(r => r.finish !== undefined || r.dist);
+    // 汎用形式は新しい順に並ぶ前提（日付があれば日付で並べ替え）
+    const out = summarizeRuns(runs.every(r => r.date) ? runs : [...runs].reverse(), race);
 
     // 見出し行から斤量・騎手（空欄のときだけ使う）
     const kg = block.head.match(/(?:^|\s)(4[89]|5\d|6[0-3])(?:\.[05])?(?=\s|kg|$)/);
@@ -331,6 +352,143 @@ const KB = (() => {
     return out;
   }
 
+  /* ---------------- 競馬ブック 出馬表（馬柱）専用 ---------------- */
+
+  const VENUE_1 = { 札: '札幌', 函: '函館', 福: '福島', 新: '新潟', 東: '東京', 中: '中山', 名: '中京', 京: '京都', 阪: '阪神', 小: '小倉' };
+  const SEX_AGE = /(牡|牝|セ)\s?(\d{1,2})(?:\s|$)/;
+  const RUN1 = /^(\d{1,2})(札|函|福|新|東|中|名|京|阪|小|中京|中山)(\d{1,2})[･・.](\d{1,2})\s*(.*)$/;
+
+  /** 「枠」「馬番」が1行ずつ並ぶ競馬ブックの出馬表を馬ごとに切り出す */
+  function splitKeibabook(text) {
+    const lines = text.split('\n').map(l => l.trim());
+    const starts = [];
+    for (let i = 0; i + 2 < lines.length; i++) {
+      if (!/^[1-8]$/.test(lines[i]) || !/^\d{1,2}$/.test(lines[i + 1])) continue;
+      const num = +lines[i + 1];
+      if (num < 1 || num > 18) continue;
+      // 15行以内に「牡 4」などの性齢があれば馬の先頭とみなす
+      const sx = lines.slice(i + 2, i + 18).findIndex(l => SEX_AGE.test(l));
+      if (sx < 0) continue;
+      starts.push(i);
+      i += 2;
+    }
+    return starts.map((st, k) => ({ start: st, lines: lines.slice(st, k + 1 < starts.length ? starts[k + 1] : lines.length) }));
+  }
+
+  function parseKbRunLines(l1, l2, l3, l4) {
+    const run = {};
+    const m1 = l1.match(RUN1);
+    if (!m1) return null;
+    run.venue = VENUE_1[m1[2]] || m1[2];
+    run.month = +m1[3]; run.day = +m1[4];
+    const rest = m1[5] || '';
+    const fm = rest.match(/(\d{1,2})頭\s?(\d{1,2}|中|取|除|失)?\s*$/);
+    if (fm) {
+      run.field = +fm[1];
+      if (fm[2]) run.finish = /^\d+$/.test(fm[2]) ? +fm[2] : '中';
+    }
+    const gr = rest.match(/(G[123]|\(L\)|OP|L)(?=\d{1,2}頭)/) || rest.match(/(G[123]|\(L\)|OP)/);
+    if (gr) run.grade = gr[1].replace(/[()]/g, '');
+    run.race = rest.replace(/(G[123]|\(L\)|OP)?\s?\d{1,2}頭.*$/, '').trim();
+
+    const m2 = (l2 || '').match(/^(\d{4})(芝|ダ|障)(内|外|直)?([A-D])?\s?(\d\.\d{2}\.\d)?(.*?)\s+(\d{2}(?:\.\d)?)\b/);
+    if (m2) {
+      run.dist = +m2[1];
+      run.surface = m2[2] === '芝' ? 'turf' : m2[2] === 'ダ' ? 'dirt' : 'jump';
+      if (m2[5]) run.time = m2[5];
+      run.jockey = m2[6].trim();
+      run.kg = parseFloat(m2[7]);
+    }
+    const m3 = (l3 || '').match(/^([SMH])?(\d{2}\.\d)-(\d{2}\.\d)(最内|大外|内|中|外)?(?:S(\d{2,3}))?/);
+    if (m3) {
+      run.pace = m3[1] || null;
+      run.first3f = +m3[2];
+      run.agari = +m3[3];
+      run.pos4 = m3[4] || null;
+      if (m3[5]) run.si = +m3[5];
+    }
+    const m4 = (l4 || '').match(/^(.*?)(\d+\.\d)(.*?)(\d{3})(\d{1,2})枠(\d{1,2})人/);
+    if (m4) {
+      run.margin = +m4[2];
+      run.rival = (m4[1] || m4[3]).trim(); // 勝ち馬（自分が勝った時は2着馬）
+      run.weight = +m4[4];
+      run.num = +m4[5];
+      run.pop = +m4[6];
+    }
+    return run;
+  }
+
+  /** 月日だけの日付に年を補う（古い順に並んでいる前提で新しい方から遡る） */
+  function assignYears(runs, raceDate) {
+    const rd = raceDate ? new Date(raceDate) : new Date();
+    let y = rd.getFullYear(), m = rd.getMonth() + 1, d = rd.getDate();
+    for (let k = runs.length - 1; k >= 0; k--) {
+      const r = runs[k];
+      if (!r.month) continue;
+      let yy = y;
+      if (r.month > m || (r.month === m && r.day > d)) yy = y - 1;
+      r.date = new Date(yy, r.month - 1, r.day);
+      y = yy; m = r.month; d = r.day;
+    }
+  }
+
+  function parseKeibabookHorse(block, race) {
+    const L = block.lines;
+    const out = { waku: +L[0], num: +L[1] };
+    let i = 2;
+    if (/^\d{2,3}\.\d$/.test(L[i])) { out.rt = parseFloat(L[i]); i++; }
+    else if (/^[-－—]*$/.test(L[i])) i++;
+    // CPU印・展開
+    for (; i < Math.min(L.length, 6); i++) {
+      if (/^[◎○◯▲△☆×注✓・]$/.test(L[i])) { out.cpu = L[i] === '・' ? '' : L[i]; continue; }
+      if (/^(逃|先|差|追|自|マ)$/.test(L[i])) { out.style = L[i]; continue; }
+      break;
+    }
+    // 斤量＋騎手（1文字ずつ縦に並ぶ）
+    const sx = L.findIndex((l, k) => k >= i && SEX_AGE.test(l));
+    const km = (L[i] || '').match(/^(\d{2}(?:\.\d)?)\s*(.*)$/);
+    if (km && sx > i) {
+      out.kg = parseFloat(km[1]);
+      out.jockey = (km[2] + L.slice(i + 1, sx).join('')).replace(/\s/g, '');
+    }
+    if (sx >= 0) {
+      const sa = L[sx].match(SEX_AGE);
+      out.sexAge = sa[1] + sa[2];
+      out.sire = L[sx].slice(0, sa.index).trim();
+      out.name = (L[sx + 1] || '').replace(/[\s(（].*$/, '').trim();
+    }
+    const stable = L.find(l => /[(（](美|栗|地|外)[)）]$/.test(l));
+    if (stable) out.stable = stable;
+    const rec = L.find(l => /^\d+-\d+-\d+-\d+$/.test(l));
+    if (rec) out.record = rec;
+
+    // 過去走：1走4行
+    const runs = [];
+    for (let k = Math.max(0, sx); k < L.length; k++) {
+      if (!RUN1.test(L[k])) continue;
+      const r = parseKbRunLines(L[k], L[k + 1], L[k + 2], L[k + 3]);
+      if (r) { runs.push(r); k += 3; }
+    }
+    assignYears(runs, race.date);
+    return { out, runs };
+  }
+
+  /** 出馬表（競馬ブック形式）を解析。形式が違えば null */
+  function parseKeibabookSyutuba(text, race) {
+    const blocks = splitKeibabook(text);
+    if (!blocks.length) return null;
+    const rows = blocks.map(b => {
+      const { out, runs } = parseKeibabookHorse(b, race);
+      const data = summarizeRuns(runs, race);
+      Object.assign(data, {
+        kg: out.kg, jockey: out.jockey, rt: out.rt, cpu: out.cpu, style: out.style,
+        sexAge: out.sexAge, stable: out.stable, record: out.record, sire: out.sire,
+      });
+      return { num: out.num, name: out.name || '', data };
+    });
+    return { rows, start: blocks[0].start };
+  }
+
   /* ---------------- レース情報（ページ見出し） ---------------- */
 
   const NAME_KEY = /チャンピオン|シップ|大賞典|ハードル|ステークス|S$|S\(|賞|カップ|C$|C\(|記念|特別|杯|ダービー|オークス|新馬|未勝利|クラス|オープン|トロフィー|チャレンジ|ハンデキャップ|メイクデビュー|ジャンプ/;
@@ -421,17 +579,30 @@ const KB = (() => {
    */
   function analyze(rawText, type, race) {
     const text = normalize(rawText);
-    if (type === 'auto') type = detectType(rawText);
+    const kbBlocks = splitKeibabook(text);
+    const isKb = kbBlocks.length > 0;
+    if (type === 'auto') type = isKb ? 'past' : detectType(rawText);
     const known = race.horses.map(h => ({ id: h.id, num: h.num, name: h.name }));
-    const blocks = splitBlocks(text, known);
+    const useKb = isKb && type === 'past';
+    const blocks = useKb ? [] : splitBlocks(text, known);
     // ページ見出しのレース条件（距離・コース適性の計算にも使う）
-    const raceInfo = parseRaceInfo(text, blocks, (race.date || '').slice(0, 4) || new Date().getFullYear());
+    const year = (race.date || '').slice(0, 4) || new Date().getFullYear();
+    const raceInfo = parseRaceInfo(text, isKb ? [{ start: kbBlocks[0].start }] : blocks, year);
     const r2 = { ...race, ...raceInfo };
-    const fn = { past: b => parsePast(b, r2), train: parseTrain, comment: parseComment, odds: parseOdds }[type];
-    const rows = blocks.map(b => {
-      const match = known.find(h => h.name && h.name === b.name) || (b.num && known.find(h => h.num === b.num && (!h.name || !b.name)));
-      return { num: b.num ?? match?.num ?? null, name: b.name || match?.name || '', matchId: match?.id || null, data: fn(b) };
-    });
+    const matchOf = (name, num) => known.find(h => h.name && h.name === name) || (num && known.find(h => h.num === num && (!h.name || !name)));
+    let rows;
+    if (useKb) {
+      rows = parseKeibabookSyutuba(text, r2).rows.map(r => {
+        const match = matchOf(r.name, r.num);
+        return { ...r, matchId: match?.id || null, data: { ...r.data, fromSyutuba: true } };
+      });
+    } else {
+      const fn = { past: b => parsePast(b, r2), train: parseTrain, comment: parseComment, odds: parseOdds }[type];
+      rows = blocks.map(b => {
+        const match = matchOf(b.name, b.num);
+        return { num: b.num ?? match?.num ?? null, name: b.name || match?.name || '', matchId: match?.id || null, data: fn(b) };
+      });
+    }
     // 同じ馬が複数ブロックに分かれた場合は後勝ちでまとめる
     const merged = [];
     rows.forEach(r => {
@@ -442,7 +613,7 @@ const KB = (() => {
     return { type, label: LABEL[type], rows: merged, raceInfo, raceInfoText: describeRaceInfo(raceInfo) };
   }
 
-  return { analyze, parseRaceInfo, describeRaceInfo, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
+  return { analyze, parseKeibabookSyutuba, splitKeibabook, parseRaceInfo, describeRaceInfo, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
 })();
 
 if (typeof module !== 'undefined') module.exports = KB;

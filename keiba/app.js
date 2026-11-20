@@ -13,7 +13,9 @@ const VENUES = ['札幌', '函館', '福島', '新潟', '東京', '中山', '中
 const MARK_ORDER = ['◎', '○', '▲', '△', '☆'];
 
 const WEIGHT_DEFS = [
-  { key: 'form',     label: '近走成績',     def: 25 },
+  { key: 'form',     label: '近走成績',     def: 20 },
+  { key: 'rating',   label: 'レイティング(RT)', def: 12, note: '競馬ブックの RT。出走馬の中での相対評価' },
+  { key: 'speed',    label: 'スピード指数', def: 12, note: '直近3走の上位2つの平均。出走馬の中での相対評価' },
   { key: 'agari',    label: '上がり(末脚)', def: 10 },
   { key: 'jockey',   label: '騎手',         def: 12 },
   { key: 'dist',     label: '距離適性',     def: 12 },
@@ -79,6 +81,7 @@ function newHorse(n) {
     id: uid(), num: n, name: '', jockey: '', kg: null, odds: null,
     form: '', agari: null, jrank: 3, dist: 3, course: 3, mud: 3,
     train: 'B', bw: null, weeks: null, scratched: false,
+    rt: null, si: null, cpu: '', style: '', sexAge: '', stable: '', record: '', sire: '',
     camp: 3, mark: '', comment: '', campHits: '', trainNote: '', trainHits: '', past: [], place: '', pop: null,
   };
 }
@@ -194,7 +197,20 @@ function predict(race, W) {
   const kgMean = kgs.length ? kgs.reduce((a, b) => a + b, 0) / kgs.length : null;
   const mudW = W.mud * (GOING_MUD[race.going] ?? 1);
 
+  // 出走馬内の相対値（最小0〜最大1、データなしは 0.4）
+  const rel = key => {
+    const vals = active.map(h => num(h[key])).filter(v => v !== null);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return h => {
+      const v = num(h[key]);
+      if (v === null || vals.length < 2) return vals.length < 2 ? 0.5 : 0.4;
+      return hi > lo ? (v - lo) / (hi - lo) : 0.5;
+    };
+  };
+  const relRt = rel('rt'), relSi = rel('si');
+
   const factorWeights = {
+    rating: W.rating ?? 0, speed: W.speed ?? 0,
     form: W.form, agari: W.agari, jockey: W.jockey, dist: W.dist, course: W.course,
     mud: mudW, train: W.train, frame: W.frame, kg: W.kg, bw: W.bw, interval: W.interval, camp: W.camp ?? 0,
   };
@@ -216,6 +232,8 @@ function predict(race, W) {
       bw: bwValue(num(h.bw)),
       interval: intervalValue(num(h.weeks)),
       camp: five(h.camp ?? 3),
+      rating: relRt(h),
+      speed: relSi(h),
     };
     let s = 0;
     for (const k in factorWeights) s += factorWeights[k] * v[k];
@@ -564,6 +582,8 @@ function renderHorseRows() {
       <td><input class="w-sm" data-f="kg" type="number" step="0.5" inputmode="decimal" value="${h.kg ?? ''}"></td>
       <td><input class="w-sm" data-f="odds" type="number" step="0.1" min="1" inputmode="decimal" value="${h.odds ?? ''}"></td>
       <td><input class="w-form" data-f="form" value="${esc(h.form)}" placeholder="1-3-5"></td>
+      <td><input class="w-sm" data-f="rt" type="number" step="0.1" inputmode="decimal" value="${h.rt ?? ''}"></td>
+      <td><input class="w-xs" data-f="si" type="number" inputmode="numeric" value="${h.si ?? ''}"></td>
       <td><input class="w-xs" data-f="agari" type="number" min="1" max="18" inputmode="numeric" value="${h.agari ?? ''}"></td>
       <td><select data-f="jrank">${opt([1, 2, 3, 4, 5], h.jrank)}</select></td>
       <td><select data-f="dist">${opt([1, 2, 3, 4, 5], h.dist)}</select></td>
@@ -578,7 +598,7 @@ function renderHorseRows() {
     </tr>`).join('');
 }
 
-const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud', 'camp']);
+const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud', 'camp', 'rt', 'si']);
 
 function touch() { current.updated = Date.now(); save(); }
 
@@ -644,13 +664,17 @@ function detailHtml(x) {
   const h = x.h;
   const goingShort = g => ({ '稍重': '稍', '不良': '不' }[g] || g || '');
   const past = (h.past || []).slice(0, 5).map(p => `
-    <li><span class="muted">${esc(p.date || '')}</span> ${esc(p.venue || '')} ${p.surface === 'turf' ? '芝' : p.surface === 'dirt' ? 'ダ' : ''}${p.dist || ''} ${goingShort(p.going)}
-      <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}
-      ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.weight ? ` ${p.weight}kg` : ''}</li>`).join('');
+    <li><span class="muted">${esc(p.date || '')}</span> ${esc(p.venue || '')} ${esc(p.race || '')}${p.grade ? `(${esc(p.grade)})` : ''} ${p.surface === 'turf' ? '芝' : p.surface === 'dirt' ? 'ダ' : ''}${p.dist || ''} ${goingShort(p.going)}
+      <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}${p.pop ? ` ${p.pop}人` : ''}
+      ${p.margin !== undefined ? `<span class="muted">${p.finish === 1 ? '+' : ''}${p.margin}秒</span>` : ''}
+      ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.pos4 ? ` 4角${esc(p.pos4)}` : ''}${p.si ? ` <b>S${p.si}</b>` : ''}${p.weight ? ` ${p.weight}kg` : ''}${p.jockey ? ` <span class="muted">${esc(p.jockey)} ${p.kg ?? ''}</span>` : ''}</li>`).join('');
+  const prof = [h.sexAge, h.sire ? `父${h.sire}` : '', h.stable, h.record ? `通算${h.record}` : '', h.style ? `脚質:${h.style}` : '', h.rt ? `RT${h.rt}` : '', h.cpu ? `CPU${h.cpu}` : '']
+    .filter(Boolean).map(esc).join('　');
   const f = x.v || {};
   const factor = (label, v) => `<span class="chip">${label} <b>${Math.round((v ?? 0.5) * 100)}</b></span>`;
   return `<div class="detail-body">
-    <div class="chips">${factor('近走', f.form)}${factor('末脚', f.agari)}${factor('騎手', f.jockey)}${factor('距離', f.dist)}${factor('コース', f.course)}${factor('道悪', f.mud)}${factor('調教', f.train)}${factor('陣営', f.camp)}${factor('枠', f.frame)}${factor('ローテ', f.interval)}</div>
+    ${prof ? `<p class="small">${prof}</p>` : ''}
+    <div class="chips">${factor('RT', f.rating)}${factor('S指数', f.speed)}${factor('近走', f.form)}${factor('末脚', f.agari)}${factor('騎手', f.jockey)}${factor('距離', f.dist)}${factor('コース', f.course)}${factor('道悪', f.mud)}${factor('調教', f.train)}${factor('陣営', f.camp)}${factor('枠', f.frame)}${factor('ローテ', f.interval)}</div>
     ${past ? `<div><h4>過去走</h4><ul class="past">${past}</ul></div>` : ''}
     <div><h4>調教 <span class="grade">${esc(h.train || 'B')}</span></h4>
       ${h.trainNote ? `<p>${esc(h.trainNote)}</p>` : ''}${h.trainHits ? `<p class="muted small">根拠：${esc(h.trainHits)}</p>` : ''}${!h.trainNote && !h.trainHits ? '<p class="muted small">未取り込み</p>' : ''}</div>
@@ -730,7 +754,7 @@ function renderImportPreview(res) {
   const st = r => r.matchId ? '<span class="tag">更新</span>' : r.name ? '<span class="tag new">新規</span>' : '<span class="tag skip">対象なし</span>';
   const d = r => r.data;
   const cols = {
-    past: [['近走', r => esc(d(r).form || '')], ['上り順', r => d(r).agari ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['斤量', r => d(r).kg ?? ''], ['走数', r => (d(r).past || []).length]],
+    past: [['騎手', r => esc(d(r).jockey || '')], ['斤量', r => d(r).kg ?? ''], ['RT', r => d(r).rt ?? ''], ['近走', r => esc(d(r).form || '')], ['SI', r => d(r).si ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['走数', r => (d(r).past || []).length]],
     train: [['評価', r => `<b>${d(r).train}</b>`], ['根拠', r => `<span class="small">${esc(d(r).trainHits)}</span>`], ['短評', r => `<span class="small wrap">${esc(d(r).trainNote)}</span>`]],
     comment: [['陣営', r => `<b>${d(r).camp}</b>`], ['根拠', r => `<span class="small">${esc(d(r).campHits)}</span>`], ['コメント', r => `<span class="small wrap">${esc(d(r).comment)}</span>`]],
     odds: [['単勝', r => d(r).odds ?? ''], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
@@ -760,7 +784,7 @@ function applyRaceInfo(info) {
   });
 }
 
-const IMPORT_FIELDS = ['form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+const IMPORT_FIELDS = ['rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
   let added = 0, updated = 0;
@@ -778,7 +802,9 @@ function applyImport(res) {
     if (!h.name && row.name) h.name = row.name;
     const d = row.data;
     IMPORT_FIELDS.forEach(k => { if (d[k] !== undefined && d[k] !== null && d[k] !== '') h[k] = d[k]; });
-    if (d.kg && h.kg == null) h.kg = d.kg;
+    // 出馬表由来の斤量・騎手は当日のものなので上書き、それ以外は空欄のときだけ
+    if (d.kg && (d.fromSyutuba || h.kg == null)) h.kg = d.kg;
+    if (d.jockey && (d.fromSyutuba || !h.jockey)) h.jockey = d.jockey;
   });
   // 名前もデータもない空欄行は取り除く
   if (current.horses.some(h => h.name)) {

@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17221b">
+  <meta name="description" content="出走馬データから印・推定勝率・期待値・買い目を出す中央競馬の予想アプリ">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="競馬予想">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <title>中央競馬 予想ノート</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="appbar">
+    <button id="nav-back" class="icon-btn hidden" aria-label="戻る">‹</button>
+    <h1 id="appbar-title">🏇 中央競馬 予想ノート</h1>
+  </header>
+
+  <!-- ========== レース一覧 ========== -->
+  <main id="list" class="screen active">
+    <details class="panel guide" id="guide">
+      <summary>はじめかた（3ステップ）</summary>
+      <ol class="steps">
+        <li>
+          <b>レースを作る</b>
+          <span>「＋ 新しいレース」を押し、競馬場・距離・馬場などを選びます。</span>
+        </li>
+        <li>
+          <b>出走馬を入れる</b>
+          <span>「貼り付けで取り込む」に、競馬ブックの出馬表（過去走）→ 調教 → 厩舎の話 → オッズ のページを順にコピーして貼ります。種類は自動で判別され、着順・適性・調教評価・陣営評価・オッズが埋まります。</span>
+        </li>
+        <li>
+          <b>「予想する」を押す</b>
+          <span>印（◎○▲△☆）・推定勝率・期待値と、予算に合わせた買い目が出ます。印は自分で付け替えられ、買い目もそれに合わせて組み直されます。レース後に着順と払戻を入れると成績が貯まります。</span>
+        </li>
+      </ol>
+      <p class="muted small">まずは下の「サンプル記念（例）」を開くと、完成形の画面を見られます。</p>
+    </details>
+
+    <section class="stats" id="stats" aria-label="成績"></section>
+
+    <div class="row-actions">
+      <button id="new-race" class="primary">＋ 新しいレース</button>
+      <button id="load-sample" class="ghost">サンプルを読み込む</button>
+    </div>
+
+    <ul id="race-list" class="race-list"></ul>
+    <p id="race-empty" class="muted center">まだレースがありません。「新しいレース」から出走馬を入力しましょう。</p>
+
+    <details class="panel">
+      <summary>データのバックアップ</summary>
+      <div class="row-actions">
+        <button id="export-json" class="ghost">書き出す</button>
+        <button id="import-paste" class="ghost">貼り付けて読み込む</button>
+        <label class="ghost file-btn">ファイルから読み込む<input id="import-json" type="file" accept="application/json,.json" hidden></label>
+      </div>
+      <p class="muted small">データはこのブラウザ（localStorage）にのみ保存されます。</p>
+    </details>
+
+    <p class="muted small disclaimer">
+      ※ 本アプリの予想は入力データに基づく統計的な目安で、的中を保証するものではありません。馬券の購入は20歳以上・余裕資金の範囲で。
+    </p>
+  </main>
+
+  <!-- ========== レース編集 ========== -->
+  <main id="edit" class="screen">
+    <section class="panel">
+      <h2>レース条件</h2>
+      <div class="grid-form">
+        <label>日付<input id="r-date" type="date"></label>
+        <label>競馬場
+          <select id="r-venue"></select>
+        </label>
+        <label>R<input id="r-num" type="number" min="1" max="12" inputmode="numeric"></label>
+        <label class="span2">レース名<input id="r-name" type="text" placeholder="例：ジャパンカップ"></label>
+        <label>芝/ダ
+          <select id="r-surface"><option value="turf">芝</option><option value="dirt">ダート</option></select>
+        </label>
+        <label>距離(m)<input id="r-dist" type="number" step="100" min="1000" max="3600" inputmode="numeric"></label>
+        <label>馬場
+          <select id="r-going"><option>良</option><option>稍重</option><option>重</option><option>不良</option></select>
+        </label>
+        <label>格
+          <select id="r-grade"><option>G1</option><option>G2</option><option>G3</option><option>OP/L</option><option>3勝</option><option>2勝</option><option>1勝</option><option>未勝利</option><option>新馬</option></select>
+        </label>
+        <label class="span2">枠バイアス
+          <select id="r-bias">
+            <option value="auto">自動（コースから推定）</option>
+            <option value="inner">内枠有利</option>
+            <option value="flat">フラット</option>
+            <option value="outer">外枠有利</option>
+          </select>
+        </label>
+      </div>
+      <p id="bias-note" class="muted small"></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>出走馬 <span id="horse-count" class="muted"></span></h2>
+        <div class="row-actions tight">
+          <button id="add-horse" class="ghost">＋ 1頭追加</button>
+          <button id="open-paste" class="primary">貼り付けで取り込む</button>
+        </div>
+      </div>
+      <p class="muted small">「貼り付けで取り込む」で競馬ブックの過去走・調教・厩舎コメント・オッズを順に貼ると、各項目が自動で埋まります。手入力・修正も可。近走は新しい順に「1-3-5」（中止は「中」）、適性・騎手・陣営は 1〜5、調教は A〜D。</p>
+      <div class="table-wrap">
+        <table class="horse-table" id="horse-table">
+          <thead>
+            <tr>
+              <th>番</th><th>馬名</th><th>騎手</th><th>斤量</th><th>単勝</th>
+              <th>近走</th><th>上り順</th><th>騎手力</th><th>距離</th><th>コース</th><th>道悪</th>
+              <th>調教</th><th>陣営</th><th>体重±</th><th>間隔週</th><th>取消</th><th></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <div class="sticky-actions">
+      <button id="delete-race" class="ghost danger">削除</button>
+      <button id="go-predict" class="primary">予想する ›</button>
+    </div>
+  </main>
+
+  <!-- ========== 予想結果 ========== -->
+  <main id="predict" class="screen">
+    <section class="panel race-head" id="race-head"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>予想印</h2>
+        <div class="row-actions tight">
+          <button id="clear-marks" class="ghost">印をリセット</button>
+          <button id="edit-race" class="ghost">出走馬を編集</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="pred-table" id="pred-table">
+          <thead>
+            <tr><th>印</th><th>番</th><th>馬名</th><th>指数</th><th>勝率</th><th>複勝率</th><th class="col-odds">単勝</th><th>期待値</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small">印はタップで自分の印に変更できます（「消」は買い目から除外）。馬名をタップすると過去走・調教・厩舎コメントの詳細が開きます。勝率は能力指数とオッズを合成した推定値、期待値 = 推定勝率 × 単勝オッズ（1.0 超で妙味あり）。</p>
+    </section>
+
+    <section class="panel">
+      <h2>おすすめ買い目</h2>
+      <div class="field-row">
+        <label>予算<input id="budget" type="number" min="100" step="100" value="3000" inputmode="numeric"> 円</label>
+      </div>
+      <div id="reco"></div>
+    </section>
+
+    <section class="panel">
+      <h2>券種別 上位組み合わせ</h2>
+      <div class="seg" id="bet-type">
+        <button data-type="umaren" class="on">馬連</button>
+        <button data-type="wide">ワイド</button>
+        <button data-type="umatan">馬単</button>
+        <button data-type="sanrenpuku">3連複</button>
+        <button data-type="sanrentan">3連単</button>
+      </div>
+      <ol id="combo-list" class="combo-list"></ol>
+      <p class="muted small">「理論オッズ」= 1 ÷ 推定的中率。実際のオッズがこれより高ければ期待値プラスの目安です。</p>
+    </section>
+
+    <details class="panel" id="weights-panel">
+      <summary>予想ロジックの重み調整</summary>
+      <div id="weights" class="weights"></div>
+      <div class="row-actions">
+        <button id="reset-weights" class="ghost">初期値に戻す</button>
+      </div>
+    </details>
+
+    <section class="panel">
+      <h2>結果・収支の記録</h2>
+      <div class="grid-form">
+        <label>1着<input id="res-1" type="number" min="1" max="18" inputmode="numeric"></label>
+        <label>2着<input id="res-2" type="number" min="1" max="18" inputmode="numeric"></label>
+        <label>3着<input id="res-3" type="number" min="1" max="18" inputmode="numeric"></label>
+        <label>購入額(円)<input id="res-bet" type="number" min="0" step="100" inputmode="numeric"></label>
+        <label>払戻額(円)<input id="res-pay" type="number" min="0" step="10" inputmode="numeric"></label>
+      </div>
+      <p id="res-summary" class="small"></p>
+    </section>
+  </main>
+
+  <!-- 貼り付け取り込み -->
+  <dialog id="paste-dialog" class="wide">
+    <form method="dialog" class="dialog-body">
+      <h2>貼り付けで取り込む</h2>
+      <div class="seg" id="imp-type">
+        <button type="button" data-type="auto" class="on">自動判別</button>
+        <button type="button" data-type="past">過去走</button>
+        <button type="button" data-type="train">調教</button>
+        <button type="button" data-type="comment">厩舎コメント</button>
+        <button type="button" data-type="odds">オッズ</button>
+        <button type="button" data-type="simple">簡易出馬表</button>
+      </div>
+      <p id="imp-help" class="muted small"></p>
+      <textarea id="paste-text" rows="8" placeholder="競馬ブックのページを選択してコピーし、ここに貼り付け"></textarea>
+      <label class="check" id="paste-replace-wrap" hidden><input type="checkbox" id="paste-replace" checked> 既存の出走馬を置き換える</label>
+      <div id="imp-preview" class="imp-preview"></div>
+      <div class="row-actions end">
+        <button value="cancel" class="ghost">閉じる</button>
+        <button type="button" id="imp-analyze" class="ghost">解析する</button>
+        <button value="ok" id="paste-ok" class="primary" disabled>反映する</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 確認 -->
+  <dialog id="ask-dialog">
+    <form method="dialog" class="dialog-body">
+      <p id="ask-msg"></p>
+      <div class="row-actions end">
+        <button value="cancel" class="ghost">キャンセル</button>
+        <button value="ok" id="ask-ok" class="primary">OK</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- バックアップ書き出し -->
+  <dialog id="export-dialog">
+    <form method="dialog" class="dialog-body">
+      <h2>データを書き出す</h2>
+      <p class="muted small">下の文字列をコピーしてメモ帳などに保存しておくと、別の端末やブラウザで「貼り付けて読み込む」から復元できます。</p>
+      <textarea id="export-text" rows="6" readonly></textarea>
+      <div class="row-actions end">
+        <button type="button" id="export-download" class="ghost">ファイルで保存</button>
+        <button type="button" id="export-copy" class="ghost">コピー</button>
+        <button value="close" class="primary">閉じる</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- バックアップ読み込み -->
+  <dialog id="import-dialog">
+    <form method="dialog" class="dialog-body">
+      <h2>データを読み込む</h2>
+      <p class="muted small">書き出した文字列を貼り付けてください。今あるレースに追加されます。</p>
+      <textarea id="import-text" rows="6"></textarea>
+      <div class="row-actions end">
+        <button value="cancel" class="ghost">キャンセル</button>
+        <button value="ok" class="primary">読み込む</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="import.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

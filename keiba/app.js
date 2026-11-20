@@ -183,6 +183,12 @@ function intervalValue(w) {
 
 const GOING_MUD = { '良': 0.3, '稍重': 1, '重': 1.6, '不良': 2.2 };
 
+/** 陣営評価：コメント取り込み済みなら今の馬場で再計算、手入力ならその値 */
+function campNow(h, going) {
+  if (h.campBase != null && typeof KB !== 'undefined') return KB.campFor(h.campBase, h.campPrefs, going).camp;
+  return h.camp ?? 3;
+}
+
 /**
  * レースを予想する。
  * @returns {{rows: Array, active: Array, marketUsed: boolean, harville: object}}
@@ -231,7 +237,7 @@ function predict(race, W) {
       kg: kg === null || kgMean === null ? 0.5 : clamp(0.5 - (kg - kgMean) * 0.12, 0, 1),
       bw: bwValue(num(h.bw)),
       interval: intervalValue(num(h.weeks)),
-      camp: five(h.camp ?? 3),
+      camp: five(campNow(h, race.going)),
       rating: relRt(h),
       speed: relSi(h),
     };
@@ -590,7 +596,7 @@ function renderHorseRows() {
       <td><select data-f="course">${opt([1, 2, 3, 4, 5], h.course)}</select></td>
       <td><select data-f="mud">${opt([1, 2, 3, 4, 5], h.mud)}</select></td>
       <td><select data-f="train">${opt(['A', 'B', 'C', 'D'], h.train)}</select></td>
-      <td><select data-f="camp">${opt([1, 2, 3, 4, 5], h.camp ?? 3)}</select></td>
+      <td><select data-f="camp">${opt([1, 2, 3, 4, 5], campNow(h, r.going))}</select></td>
       <td><input class="w-xs" data-f="bw" type="number" step="2" inputmode="numeric" value="${h.bw ?? ''}" placeholder="±"></td>
       <td><input class="w-xs" data-f="weeks" type="number" min="0" inputmode="numeric" value="${h.weeks ?? ''}"></td>
       <td><input data-f="scratched" type="checkbox"${h.scratched ? ' checked' : ''} aria-label="出走取消"></td>
@@ -610,7 +616,8 @@ let betType = 'umaren';
 
 function renderPredict() {
   const r = current;
-  $('#race-head').innerHTML = `<p class="title">${esc(raceTitle(r))}</p><p class="meta">${esc(raceMeta(r))}　枠：${{ inner: '内有利', outer: '外有利', flat: 'フラット' }[effectiveBias(r)]}</p>`;
+  $('#race-head').innerHTML = `<p class="title">${esc(raceTitle(r))}</p><p class="meta">${esc(raceMeta(r))}　枠：${{ inner: '内有利', outer: '外有利', flat: 'フラット' }[effectiveBias(r)]}</p>
+    <div class="going-row"><span class="muted small">馬場</span><div class="seg going-seg" id="going-seg">${['良', '稍重', '重', '不良'].map(g => `<button data-going="${g}" class="${r.going === g ? 'on' : ''}">${g}</button>`).join('')}</div></div>`;
   renderWeights();
   renderResultForm();
   refreshPrediction();
@@ -688,7 +695,7 @@ function detailHtml(x) {
     ${past ? `<div><h4>過去走</h4><ul class="past">${past}</ul></div>` : ''}
     <div><h4>調教 <span class="grade">${esc(h.train || 'B')}</span></h4>
       ${h.trainNote ? `<p>${esc(h.trainNote)}</p>` : ''}${h.trainHits ? `<p class="muted small">根拠：${esc(h.trainHits)}</p>` : ''}${!h.trainNote && !h.trainHits ? '<p class="muted small">未取り込み</p>' : ''}</div>
-    <div><h4>厩舎コメント <span class="grade">${h.camp ?? 3}</span></h4>
+    <div><h4>厩舎コメント <span class="grade">${campNow(h, current.going)}</span>${h.campBase != null ? `<span class="muted small">（${esc(current.going)}での評価）</span>` : ''}</h4>
       ${h.comment ? `<p>${esc(h.comment)}</p>` : '<p class="muted small">未取り込み</p>'}${h.campHits ? `<p class="muted small">根拠：${esc(h.campHits)}</p>` : ''}</div>
     ${h.place || h.pop ? `<p class="small">複勝 ${esc(h.place || '—')}　${h.pop ? h.pop + '番人気' : ''}</p>` : ''}
   </div>`;
@@ -794,7 +801,7 @@ function applyRaceInfo(info) {
   });
 }
 
-const IMPORT_FIELDS = ['formAdj', 'blinker', 'oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+const IMPORT_FIELDS = ['campBase', 'campPrefs', 'formAdj', 'blinker', 'oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
   let added = 0, updated = 0;
@@ -983,6 +990,7 @@ function init() {
       h[f] = NUM_FIELDS.has(f) ? num(el.value) : el.value;
       if (f === 'odds') { h.oddsApprox = false; h.oddsKind = ''; }
       if (f === 'form') h.formAdj = null; // 手で直したら着順だけで評価
+      if (f === 'camp') h.campBase = null; // 手で直したらその値を使う
 
     }
     touch();
@@ -1074,6 +1082,14 @@ function init() {
 
   // 予想
   $('#edit-race').addEventListener('click', () => go('edit', current.id));
+  $('#race-head').addEventListener('click', e => {
+    const b = e.target.closest('[data-going]');
+    if (!b || current.going === b.dataset.going) return;
+    current.going = b.dataset.going;
+    touch();
+    renderPredict();
+    toast(`馬場を「${current.going}」にして再計算しました。`);
+  });
   $('#pred-table').addEventListener('change', e => {
     const sel = e.target.closest('[data-mark]');
     if (!sel) return;

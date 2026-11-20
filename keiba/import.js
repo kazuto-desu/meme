@@ -469,18 +469,31 @@ const KB = (() => {
   ];
 
   /** 今日の馬場と陣営の言葉の噛み合い（重・不良での「良馬場が前提」など） */
-  function goingFit(text, going) {
+  /** コメントから馬場の好み（良馬場希望／道悪OK）を取り出す */
+  function goingPrefs(text) {
+    return {
+      goodOnly: /良馬場(?:が前提|で走れれば|なら|希望|がいい|の方が)|(?:時計の)?速い馬場(?:が|の方が)|道悪(?:は|が)?(?:苦手|ダメ|不安|未知)|渋った馬場(?:は|が)?(?:苦手|ダメ)/.test(text),
+      heavyOk: /時計(?:が|の)?(?:かかって|かかる|要せば|要する)|道悪(?:は|も)?(?:得意|苦にしない|上手|こなす|合う)|重馬場(?:は|も)?(?:得意|合う|上手)|(?:前走|今回)のような馬場(?:状態)?(?:も|が)?合|渋った馬場(?:も|が|は)?(?:得意|合う|苦にしない)|力の要る馬場/.test(text),
+    };
+  }
+
+  /** 馬場の好みと当日の馬場から加減点 */
+  function goingAdj(prefs, going) {
     const heavy = going === '重' || going === '不良';
     const soft = heavy || going === '稍重';
-    const hits = [];
     let s = 0;
-    if (/良馬場(?:が前提|で走れれば|なら|希望|がいい|の方が)|(?:時計の)?速い馬場(?:が|の方が)|道悪(?:は|が)?(?:苦手|ダメ|不安|未知)|渋った馬場(?:は|が)?(?:苦手|ダメ)/.test(text)) {
-      if (soft) { s -= heavy ? 2 : 1; hits.push(`馬場×(${going})`); }
-    }
-    if (/時計(?:が|の)?(?:かかって|かかる|要せば|要する)|道悪(?:は|も)?(?:得意|苦にしない|上手|こなす|合う)|重馬場(?:は|も)?(?:得意|合う|上手)|(?:前走|今回)のような馬場(?:状態)?(?:も|が)?合|渋った馬場(?:も|が|は)?(?:得意|合う|苦にしない)|力の要る馬場/.test(text)) {
-      if (soft) { s += heavy ? 1.5 : 1; hits.push(`馬場○(${going})`); }
-    }
+    const hits = [];
+    if (prefs.goodOnly && soft) { s -= heavy ? 2 : 1; hits.push(`馬場×(${going})`); }
+    if (prefs.heavyOk && soft) { s += heavy ? 1.5 : 1; hits.push(`馬場○(${going})`); }
     return { s, hits };
+  }
+
+  const campLevel = s => (s >= 4.5 ? 5 : s >= 1.5 ? 4 : s > -0.5 ? 3 : s > -2.5 ? 2 : 1);
+
+  /** 取り込み時の素点（馬場以外）と馬場の好みから、指定の馬場での陣営評価を出す */
+  function campFor(base, prefs, going) {
+    const g = goingAdj(prefs || {}, going);
+    return { camp: campLevel(base + g.s), hits: g.hits };
   }
 
   const CAMP_MARK = { '◎': 2.5, '○': 0, '◯': 0, '▲': -1, '△': -2, '☆': 0.5, '×': -3 };
@@ -504,12 +517,19 @@ const KB = (() => {
     const c = sentiment(stripNegations(text), CAMP_WORDS);
     s += c.s * (km ? 0.6 : 1);
     hits.push(...c.hits);
-    const g = goingFit(headline + ' ' + text, race.going);
+    const base = s;
+    const prefs = goingPrefs(headline + ' ' + text);
+    const g = goingAdj(prefs, race.going);
     s += g.s;
-    hits.push(...g.hits);
 
-    const camp = s >= 4.5 ? 5 : s >= 1.5 ? 4 : s > -0.5 ? 3 : s > -2.5 ? 2 : 1;
-    return { comment: body.replace(/\n+/g, ' ').slice(0, 300), camp, campScore: Math.round(s * 10) / 10, campHits: hits.join(' ') };
+    return {
+      comment: body.replace(/\n+/g, ' ').slice(0, 300),
+      camp: campLevel(s),
+      campScore: Math.round(s * 10) / 10,
+      campBase: Math.round(base * 100) / 100,
+      campPrefs: prefs,
+      campHits: [...hits, ...g.hits].join(' '),
+    };
   }
 
   /* ---------------- オッズ ---------------- */
@@ -801,7 +821,7 @@ const KB = (() => {
     return { type, label: LABEL[type], rows: merged, raceInfo, raceInfoText: describeRaceInfo(raceInfo) };
   }
 
-  return { analyze, parseKeibabookSyutuba, splitKeibabook, parseRaceInfo, describeRaceInfo, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
+  return { analyze, campFor, parseKeibabookSyutuba, splitKeibabook, parseRaceInfo, describeRaceInfo, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
 })();
 
 if (typeof module !== 'undefined') module.exports = KB;

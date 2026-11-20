@@ -32,12 +32,11 @@
         </li>
         <li>
           <b>出走馬を入れる</b>
-          <span>馬名・単勝オッズ・近走着順（例「1-3-5」）だけでも予想できます。
-          JRA や新聞の出馬表をコピーして「一括貼り付け」も可能です。分かる範囲で適性（1〜5）や調教（A〜D）を足すと精度が上がります。</span>
+          <span>「貼り付けで取り込む」に、競馬ブックの出馬表（過去走）→ 調教 → 厩舎の話 → オッズ のページを順にコピーして貼ります。種類は自動で判別され、着順・適性・調教評価・陣営評価・オッズが埋まります。</span>
         </li>
         <li>
           <b>「予想する」を押す</b>
-          <span>印（◎○▲△☆）・推定勝率・期待値と、予算に合わせた買い目が出ます。レース後に着順と払戻を入れると成績が貯まります。</span>
+          <span>印（◎○▲△☆）・推定勝率・期待値と、予算に合わせた買い目が出ます。印は自分で付け替えられ、買い目もそれに合わせて組み直されます。レース後に着順と払戻を入れると成績が貯まります。</span>
         </li>
       </ol>
       <p class="muted small">まずは下の「サンプル記念（例）」を開くと、完成形の画面を見られます。</p>
@@ -106,17 +105,17 @@
         <h2>出走馬 <span id="horse-count" class="muted"></span></h2>
         <div class="row-actions tight">
           <button id="add-horse" class="ghost">＋ 1頭追加</button>
-          <button id="open-paste" class="ghost">一括貼り付け</button>
+          <button id="open-paste" class="primary">貼り付けで取り込む</button>
         </div>
       </div>
-      <p class="muted small">近走は新しい順に「1-3-5-2」のように入力（中止・除外は「中」）。適性・騎手は 1〜5 の5段階、調教は A〜D。</p>
+      <p class="muted small">「貼り付けで取り込む」で競馬ブックの過去走・調教・厩舎コメント・オッズを順に貼ると、各項目が自動で埋まります。手入力・修正も可。近走は新しい順に「1-3-5」（中止は「中」）、適性・騎手・陣営は 1〜5、調教は A〜D。</p>
       <div class="table-wrap">
         <table class="horse-table" id="horse-table">
           <thead>
             <tr>
               <th>番</th><th>馬名</th><th>騎手</th><th>斤量</th><th>単勝</th>
               <th>近走</th><th>上り順</th><th>騎手力</th><th>距離</th><th>コース</th><th>道悪</th>
-              <th>調教</th><th>体重±</th><th>間隔週</th><th>取消</th><th></th>
+              <th>調教</th><th>陣営</th><th>体重±</th><th>間隔週</th><th>取消</th><th></th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -137,7 +136,10 @@
     <section class="panel">
       <div class="panel-head">
         <h2>予想印</h2>
-        <button id="edit-race" class="ghost">出走馬を編集</button>
+        <div class="row-actions tight">
+          <button id="clear-marks" class="ghost">印をリセット</button>
+          <button id="edit-race" class="ghost">出走馬を編集</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="pred-table" id="pred-table">
@@ -147,7 +149,7 @@
           <tbody></tbody>
         </table>
       </div>
-      <p class="muted small">勝率は能力指数とオッズ（市場評価）を合成した推定値。期待値 = 推定勝率 × 単勝オッズ（1.0 超で妙味あり）。</p>
+      <p class="muted small">印はタップで自分の印に変更できます（「消」は買い目から除外）。馬名をタップすると過去走・調教・厩舎コメントの詳細が開きます。勝率は能力指数とオッズを合成した推定値、期待値 = 推定勝率 × 単勝オッズ（1.0 超で妙味あり）。</p>
     </section>
 
     <section class="panel">
@@ -192,20 +194,26 @@
     </section>
   </main>
 
-  <!-- 一括貼り付け -->
-  <dialog id="paste-dialog">
+  <!-- 貼り付け取り込み -->
+  <dialog id="paste-dialog" class="wide">
     <form method="dialog" class="dialog-body">
-      <h2>出馬表を一括貼り付け</h2>
-      <p class="muted small">
-        1行1頭。タブ・カンマ・空白区切りで、列の順番は<br>
-        <code>馬番 馬名 騎手 斤量 単勝オッズ 近走</code><br>
-        （近走以降は省略可。例：<code>3 サンプルホース 佐藤 57 4.5 1-2-3</code>）
-      </p>
-      <textarea id="paste-text" rows="10" placeholder="1	アオゾラロード	田中	57	3.2	1-2-1&#10;2	ベニカゼ	鈴木	57	12.5	4-6-3"></textarea>
-      <label class="check"><input type="checkbox" id="paste-replace" checked> 既存の出走馬を置き換える</label>
+      <h2>貼り付けで取り込む</h2>
+      <div class="seg" id="imp-type">
+        <button type="button" data-type="auto" class="on">自動判別</button>
+        <button type="button" data-type="past">過去走</button>
+        <button type="button" data-type="train">調教</button>
+        <button type="button" data-type="comment">厩舎コメント</button>
+        <button type="button" data-type="odds">オッズ</button>
+        <button type="button" data-type="simple">簡易出馬表</button>
+      </div>
+      <p id="imp-help" class="muted small"></p>
+      <textarea id="paste-text" rows="8" placeholder="競馬ブックのページを選択してコピーし、ここに貼り付け"></textarea>
+      <label class="check" id="paste-replace-wrap" hidden><input type="checkbox" id="paste-replace" checked> 既存の出走馬を置き換える</label>
+      <div id="imp-preview" class="imp-preview"></div>
       <div class="row-actions end">
-        <button value="cancel" class="ghost">キャンセル</button>
-        <button value="ok" id="paste-ok" class="primary">取り込む</button>
+        <button value="cancel" class="ghost">閉じる</button>
+        <button type="button" id="imp-analyze" class="ghost">解析する</button>
+        <button value="ok" id="paste-ok" class="primary" disabled>反映する</button>
       </div>
     </form>
   </dialog>
@@ -250,6 +258,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
+  <script src="import.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

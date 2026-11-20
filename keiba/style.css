@@ -358,3 +358,38 @@ body::before {
   z-index: 10;
   background: var(--surface);
 }
+
+/* ---------- 取り込み ---------- */
+dialog.wide { width: min(820px, calc(100vw - 32px)); }
+dialog .seg button { flex: 1 1 auto; }
+.imp-preview { margin-top: 10px; }
+.imp-preview .table-wrap { max-height: 45vh; overflow: auto; }
+table.preview td { font-size: .82rem; vertical-align: top; }
+table.preview .wrap { white-space: normal; display: block; min-width: 14em; max-width: 28em; }
+.tag { font-size: .7rem; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+.tag.new { background: var(--accent); color: var(--accent-ink); }
+.tag.skip { color: var(--bad); }
+.primary:disabled { opacity: .45; cursor: default; }
+
+/* ---------- 予想：印・詳細 ---------- */
+.mark-sel {
+  appearance: none; -webkit-appearance: none;
+  width: 2.1em; padding: 2px 0; text-align: center; text-align-last: center;
+  background: transparent; border: 1px dashed transparent; border-radius: 6px;
+  color: var(--gold); font-size: 1.15rem; font-weight: 700; cursor: pointer;
+}
+.mark-sel:hover { border-color: var(--line); }
+.mark-sel.manual { border: 1px solid var(--gold); }
+tr.erased td { opacity: .45; }
+.name-btn { border: 0; background: transparent; padding: 0; text-align: left; font-weight: 600; display: block; }
+.name-btn:hover { color: var(--accent); }
+.info-dot { color: var(--accent); font-size: .6rem; vertical-align: middle; }
+tr.detail td { background: var(--surface-2); white-space: normal; padding: 10px 12px; }
+.detail-body { display: grid; gap: 8px; font-size: .84rem; max-width: 640px; }
+.detail-body h4 { margin: 0 0 2px; font-size: .82rem; color: var(--muted); }
+.detail-body p { margin: 0; line-height: 1.6; }
+.detail-body .grade { color: var(--gold); font-weight: 700; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { background: var(--surface); border-radius: 999px; padding: 2px 8px; font-size: .74rem; color: var(--muted); }
+.chip b { color: var(--text); font-variant-numeric: tabular-nums; }
+ul.past { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }

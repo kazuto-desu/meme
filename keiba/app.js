@@ -20,6 +20,7 @@ const WEIGHT_DEFS = [
   { key: 'course',   label: 'コース適性',   def: 8 },
   { key: 'mud',      label: '道悪適性',     def: 6, note: '稍重以上で効きが強まります' },
   { key: 'train',    label: '調教',         def: 8 },
+  { key: 'camp',     label: '厩舎コメント', def: 8 },
   { key: 'frame',    label: '枠順バイアス', def: 5 },
   { key: 'kg',       label: '斤量',         def: 4 },
   { key: 'bw',       label: '馬体重増減',   def: 4 },
@@ -78,6 +79,7 @@ function newHorse(n) {
     id: uid(), num: n, name: '', jockey: '', kg: null, odds: null,
     form: '', agari: null, jrank: 3, dist: 3, course: 3, mud: 3,
     train: 'B', bw: null, weeks: null, scratched: false,
+    camp: 3, mark: '', comment: '', campHits: '', trainNote: '', trainHits: '', past: [], place: '', pop: null,
   };
 }
 
@@ -194,7 +196,7 @@ function predict(race, W) {
 
   const factorWeights = {
     form: W.form, agari: W.agari, jockey: W.jockey, dist: W.dist, course: W.course,
-    mud: mudW, train: W.train, frame: W.frame, kg: W.kg, bw: W.bw, interval: W.interval,
+    mud: mudW, train: W.train, frame: W.frame, kg: W.kg, bw: W.bw, interval: W.interval, camp: W.camp ?? 0,
   };
   const wSum = Object.values(factorWeights).reduce((a, b) => a + b, 0) || 1;
 
@@ -213,6 +215,7 @@ function predict(race, W) {
       kg: kg === null || kgMean === null ? 0.5 : clamp(0.5 - (kg - kgMean) * 0.12, 0, 1),
       bw: bwValue(num(h.bw)),
       interval: intervalValue(num(h.weeks)),
+      camp: five(h.camp ?? 3),
     };
     let s = 0;
     for (const k in factorWeights) s += factorWeights[k] * v[k];
@@ -249,9 +252,19 @@ function predict(race, W) {
 
   // 印
   const order = [...rows].sort((x, y) => y.p - x.p);
-  order.forEach((r, i) => { r.rank = i + 1; r.mark = ['◎', '○', '▲', '△', '△'][i] || ''; });
-  const ana = order
-    .filter(r => r.rank >= 4 && r.ev !== null && r.ev >= 1.0 && num(r.h.odds) >= 10)
+  // 手動で付けた印（h.mark）を優先し、残りの印を勝率順に割り当てる
+  const taken = new Set(order.map(r => r.h.mark).filter(Boolean));
+  const pool = ['◎', '○', '▲'].filter(m => !taken.has(m));
+  let triangles = 2;
+  order.forEach((r, i) => {
+    r.rank = i + 1;
+    r.manual = !!r.h.mark;
+    if (r.manual) { r.mark = r.h.mark; return; }
+    r.autoMark = pool.length ? pool.shift() : triangles-- > 0 ? '△' : '';
+    r.mark = r.autoMark;
+  });
+  const ana = taken.has('☆') ? null : order
+    .filter(r => !r.manual && r.rank >= 4 && r.ev !== null && r.ev >= 1.0 && num(r.h.odds) >= 10)
     .sort((x, y) => y.ev - x.ev)[0];
   if (ana) ana.mark = '☆';
 
@@ -351,11 +364,11 @@ function allocate(tickets, amount) {
 function recommend(pred, budget) {
   const rows = pred.idx;
   const pos = r => rows.indexOf(r);
-  const byMark = m => pred.rows.filter(r => r.mark === m);
-  const hon = byMark('◎')[0];
+  const hon = pred.rows.find(r => r.mark === '◎') || pred.rows.find(r => r.mark !== '消');
+  if (!hon) return [];
+  const byMark = m => pred.rows.filter(r => r.mark === m && r !== hon);
   const taiko = [...byMark('○'), ...byMark('▲')];
   const himo = [...taiko, ...byMark('△'), ...byMark('☆')];
-  if (!hon) return [];
 
   const bundles = [];
   const H = pred.harville;
@@ -557,6 +570,7 @@ function renderHorseRows() {
       <td><select data-f="course">${opt([1, 2, 3, 4, 5], h.course)}</select></td>
       <td><select data-f="mud">${opt([1, 2, 3, 4, 5], h.mud)}</select></td>
       <td><select data-f="train">${opt(['A', 'B', 'C', 'D'], h.train)}</select></td>
+      <td><select data-f="camp">${opt([1, 2, 3, 4, 5], h.camp ?? 3)}</select></td>
       <td><input class="w-xs" data-f="bw" type="number" step="2" inputmode="numeric" value="${h.bw ?? ''}" placeholder="±"></td>
       <td><input class="w-xs" data-f="weeks" type="number" min="0" inputmode="numeric" value="${h.weeks ?? ''}"></td>
       <td><input data-f="scratched" type="checkbox"${h.scratched ? ' checked' : ''} aria-label="出走取消"></td>
@@ -564,7 +578,7 @@ function renderHorseRows() {
     </tr>`).join('');
 }
 
-const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud']);
+const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud', 'camp']);
 
 function touch() { current.updated = Date.now(); save(); }
 
@@ -597,17 +611,20 @@ function refreshPrediction() {
   }
   const field = r.horses.length;
   const maxP = Math.max(...pred.rows.map(x => x.p));
+  const markOpts = (x) => ['', '◎', '○', '▲', '△', '☆', '消'].map(m =>
+    `<option value="${m}"${(x.manual ? x.h.mark : '') === m ? ' selected' : ''}>${m === '' ? (x.manual ? '自動' : (x.mark || '・')) : m}</option>`).join('');
   tbody.innerHTML = pred.rows.map(x => `
-    <tr>
-      <td class="mark">${x.mark}</td>
+    <tr class="${x.mark === '消' ? 'erased' : ''}">
+      <td class="mark"><select class="mark-sel${x.manual ? ' manual' : ''}" data-mark="${x.h.id}" aria-label="${x.h.num}番の印">${markOpts(x)}</select></td>
       <td>${wakuBadge(x.h.num, field)}</td>
-      <td class="name">${esc(x.h.name || '(未入力)')}<br><span class="muted small">${esc(x.h.jockey || '')}</span></td>
+      <td class="name"><button class="name-btn" data-detail="${x.h.id}" aria-expanded="${openDetails.has(x.h.id)}">${esc(x.h.name || '(未入力)')}${hasInfo(x.h) ? ' <span class="info-dot" title="取り込んだ情報あり">●</span>' : ''}</button><span class="muted small">${esc(x.h.jockey || '')}</span></td>
       <td class="num">${x.index.toFixed(1)}</td>
       <td class="num"><span class="bar"><i style="width:${(x.p / maxP * 100).toFixed(0)}%"></i></span>${pct(x.p)}</td>
       <td class="num">${pct(x.pPlace, 0)}</td>
       <td class="num col-odds">${num(x.h.odds) ? num(x.h.odds).toFixed(1) : '—'}</td>
       <td class="num ${x.ev === null ? '' : x.ev >= 1 ? 'ev-plus' : 'ev-minus'}">${x.ev === null ? '—' : x.ev.toFixed(2)}</td>
-    </tr>`).join('');
+    </tr>
+    <tr class="detail"${openDetails.has(x.h.id) ? '' : ' hidden'} data-detail-row="${x.h.id}"><td colspan="8">${detailHtml(x)}</td></tr>`).join('');
 
   // 本命を記録（成績集計用）
   const hon = pred.rows.find(x => x.mark === '◎');
@@ -615,6 +632,32 @@ function refreshPrediction() {
 
   renderReco();
   renderCombos();
+}
+
+const openDetails = new Set();
+
+function hasInfo(h) {
+  return !!(h.comment || h.trainNote || h.trainHits || (h.past && h.past.length));
+}
+
+function detailHtml(x) {
+  const h = x.h;
+  const goingShort = g => ({ '稍重': '稍', '不良': '不' }[g] || g || '');
+  const past = (h.past || []).slice(0, 5).map(p => `
+    <li><span class="muted">${esc(p.date || '')}</span> ${esc(p.venue || '')} ${p.surface === 'turf' ? '芝' : p.surface === 'dirt' ? 'ダ' : ''}${p.dist || ''} ${goingShort(p.going)}
+      <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}
+      ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.weight ? ` ${p.weight}kg` : ''}</li>`).join('');
+  const f = x.v || {};
+  const factor = (label, v) => `<span class="chip">${label} <b>${Math.round((v ?? 0.5) * 100)}</b></span>`;
+  return `<div class="detail-body">
+    <div class="chips">${factor('近走', f.form)}${factor('末脚', f.agari)}${factor('騎手', f.jockey)}${factor('距離', f.dist)}${factor('コース', f.course)}${factor('道悪', f.mud)}${factor('調教', f.train)}${factor('陣営', f.camp)}${factor('枠', f.frame)}${factor('ローテ', f.interval)}</div>
+    ${past ? `<div><h4>過去走</h4><ul class="past">${past}</ul></div>` : ''}
+    <div><h4>調教 <span class="grade">${esc(h.train || 'B')}</span></h4>
+      ${h.trainNote ? `<p>${esc(h.trainNote)}</p>` : ''}${h.trainHits ? `<p class="muted small">根拠：${esc(h.trainHits)}</p>` : ''}${!h.trainNote && !h.trainHits ? '<p class="muted small">未取り込み</p>' : ''}</div>
+    <div><h4>厩舎コメント <span class="grade">${h.camp ?? 3}</span></h4>
+      ${h.comment ? `<p>${esc(h.comment)}</p>` : '<p class="muted small">未取り込み</p>'}${h.campHits ? `<p class="muted small">根拠：${esc(h.campHits)}</p>` : ''}</div>
+    ${h.place || h.pop ? `<p class="small">複勝 ${esc(h.place || '—')}　${h.pop ? h.pop + '番人気' : ''}</p>` : ''}
+  </div>`;
 }
 
 function renderReco() {
@@ -675,7 +718,58 @@ function renderResultSummary() {
   el.innerHTML = `${honText}${res.bet ? `　収支 <b class="${diff >= 0 ? 'plus' : 'minus'}">${diff >= 0 ? '+' : ''}${diff.toLocaleString()}円</b>（回収率 ${pct((res.pay || 0) / res.bet, 0)}）` : ''}`;
 }
 
-/* ---------------- 一括貼り付け ---------------- */
+/* ---------------- 貼り付け取り込み ---------------- */
+
+function previewTable(head, rows) {
+  if (!rows.length) return '<p class="muted small">馬ごとのデータを見つけられませんでした。種類を手動で選ぶか、馬名が入った範囲をコピーし直してください。</p>';
+  return `<div class="table-wrap"><table class="preview"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c ?? ''}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderImportPreview(res) {
+  const st = r => r.matchId ? '<span class="tag">更新</span>' : r.name ? '<span class="tag new">新規</span>' : '<span class="tag skip">対象なし</span>';
+  const d = r => r.data;
+  const cols = {
+    past: [['近走', r => esc(d(r).form || '')], ['上り順', r => d(r).agari ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['斤量', r => d(r).kg ?? ''], ['走数', r => (d(r).past || []).length]],
+    train: [['評価', r => `<b>${d(r).train}</b>`], ['根拠', r => `<span class="small">${esc(d(r).trainHits)}</span>`], ['短評', r => `<span class="small wrap">${esc(d(r).trainNote)}</span>`]],
+    comment: [['陣営', r => `<b>${d(r).camp}</b>`], ['根拠', r => `<span class="small">${esc(d(r).campHits)}</span>`], ['コメント', r => `<span class="small wrap">${esc(d(r).comment)}</span>`]],
+    odds: [['単勝', r => d(r).odds ?? ''], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
+  }[res.type];
+  return `<p class="small">判別：<b>${res.label}</b>　${res.rows.length}頭分を検出</p>` +
+    previewTable(['番', '馬名', '', ...cols.map(c => c[0])], res.rows.map(r => [r.num ?? '—', esc(r.name || ''), st(r), ...cols.map(c => c[1](r))]));
+}
+
+const IMPORT_FIELDS = ['form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+
+function applyImport(res) {
+  let added = 0, updated = 0;
+  // 空欄の初期行だけなら置き換える
+  if (current.horses.every(h => !h.name) && res.rows.some(r => r.name && !r.matchId)) current.horses = [];
+  res.rows.forEach(row => {
+    let h = row.matchId && current.horses.find(x => x.id === row.matchId);
+    if (h) updated++;
+    else {
+      if (!row.name || current.horses.length >= 18) return;
+      h = newHorse(row.num || current.horses.length + 1);
+      current.horses.push(h);
+      added++;
+    }
+    if (!h.name && row.name) h.name = row.name;
+    const d = row.data;
+    IMPORT_FIELDS.forEach(k => { if (d[k] !== undefined && d[k] !== null && d[k] !== '') h[k] = d[k]; });
+    if (d.kg && h.kg == null) h.kg = d.kg;
+  });
+  // 名前もデータもない空欄行は取り除く
+  if (current.horses.some(h => h.name)) {
+    current.horses = current.horses.filter(h => h.name || h.odds != null || h.form || h.jockey);
+  }
+  const nums = current.horses.map(h => h.num);
+  if (nums.every(Boolean) && new Set(nums).size === nums.length) current.horses.sort((a, b) => a.num - b.num);
+  else renumber();
+  return { added, updated };
+}
+
+/* ---------------- 一括貼り付け（簡易） ---------------- */
 
 function parsePaste(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -843,19 +937,58 @@ function init() {
     $('#horse-table tbody tr:last-child input[data-f=name]').focus();
   });
 
-  // 一括貼り付け
+  // 貼り付け取り込み（競馬ブック等）
   const dlg = $('#paste-dialog');
-  $('#open-paste').addEventListener('click', () => { $('#paste-text').value = ''; dlg.showModal(); });
+  let impType = 'auto';
+  let impResult = null;
+  const IMP_HELP = {
+    auto: '貼り付けた内容から種類（過去走・調教・厩舎コメント・オッズ）を自動で判別します。',
+    past: '出馬表（馬柱）ページをまるごとコピーして貼り付け。着順・距離・コース・道悪の成績、上がり順位、レース間隔、斤量を集計します。出走馬が未登録なら馬名も登録します。',
+    train: '調教ページを貼り付け。短評の言葉、併せ馬の先着／遅れ、ラスト1F、矢印から調教評価（A〜D）を付けます。',
+    comment: '厩舎の話（談話）を貼り付け。前向き・後ろ向きの言葉から陣営評価（1〜5）を付けます。',
+    odds: 'オッズページを貼り付け。単勝・複勝・人気を取り込みます（「馬番 単勝」だけの行でも可）。',
+    simple: '1行1頭「馬番 馬名 騎手 斤量 単勝 近走」の形式で出走馬を登録します。',
+  };
+  const setImpType = t => {
+    impType = t;
+    $$('#imp-type button').forEach(b => b.classList.toggle('on', b.dataset.type === t));
+    $('#imp-help').textContent = IMP_HELP[t];
+    $('#paste-replace-wrap').hidden = t !== 'simple';
+    clearPreview();
+  };
+  const clearPreview = () => { impResult = null; $('#imp-preview').innerHTML = ''; $('#paste-ok').disabled = true; };
+  $('#imp-type').addEventListener('click', e => { const b = e.target.closest('button[data-type]'); if (b) setImpType(b.dataset.type); });
+  $('#paste-text').addEventListener('input', clearPreview);
+  $('#open-paste').addEventListener('click', () => { $('#paste-text').value = ''; setImpType('auto'); dlg.showModal(); });
+  $('#imp-analyze').addEventListener('click', () => {
+    const text = $('#paste-text').value;
+    if (!text.trim()) { toast('テキストを貼り付けてください。'); return; }
+    if (impType === 'simple') {
+      const parsed = parsePaste(text);
+      impResult = { type: 'simple', label: '出馬表（簡易）', horses: parsed };
+      $('#imp-preview').innerHTML = previewTable(['番', '馬名', '騎手', '斤量', '単勝', '近走'],
+        parsed.map(h => [h.num ?? '—', esc(h.name), esc(h.jockey), h.kg ?? '', h.odds ?? '', esc(h.form)]));
+    } else {
+      impResult = KB.analyze(text, impType, current);
+      $('#imp-preview').innerHTML = renderImportPreview(impResult);
+    }
+    $('#paste-ok').disabled = !(impResult.rows || impResult.horses).length;
+  });
   dlg.addEventListener('close', () => {
-    if (dlg.returnValue !== 'ok') return;
-    const parsed = parsePaste($('#paste-text').value);
-    if (!parsed.length) return;
-    let list = $('#paste-replace').checked ? parsed : [...current.horses, ...parsed];
-    list = list.slice(0, 18);
-    const hasNums = list.every(h => h.num) && new Set(list.map(h => h.num)).size === list.length;
-    if (hasNums) list.sort((a, b) => a.num - b.num);
-    current.horses = list;
-    if (!hasNums || list.some((h, i) => h.num !== i + 1)) renumber();
+    if (dlg.returnValue !== 'ok' || !impResult) return;
+    if (impResult.type === 'simple') {
+      const parsed = impResult.horses;
+      let list = $('#paste-replace').checked ? parsed : [...current.horses, ...parsed];
+      list = list.slice(0, 18);
+      const hasNums = list.every(h => h.num) && new Set(list.map(h => h.num)).size === list.length;
+      if (hasNums) list.sort((a, b) => a.num - b.num);
+      current.horses = list;
+      if (!hasNums || list.some((h, i) => h.num !== i + 1)) renumber();
+      toast(`${parsed.length}頭を登録しました。`);
+    } else {
+      const { added, updated } = applyImport(impResult);
+      toast(`${impResult.label}：${updated}頭を更新${added ? `、${added}頭を追加` : ''}しました。`);
+    }
     touch(); renderHorseRows();
   });
 
@@ -868,6 +1001,30 @@ function init() {
 
   // 予想
   $('#edit-race').addEventListener('click', () => go('edit', current.id));
+  $('#pred-table').addEventListener('change', e => {
+    const sel = e.target.closest('[data-mark]');
+    if (!sel) return;
+    const h = current.horses.find(x => x.id === sel.dataset.mark);
+    // ◎○▲☆ は1頭だけ：他の馬の同じ手動印は外す
+    if (['◎', '○', '▲', '☆'].includes(sel.value)) current.horses.forEach(x => { if (x !== h && x.mark === sel.value) x.mark = ''; });
+    h.mark = sel.value;
+    if (current.result?.order?.[0] == null && sel.value === '◎') current.honmei = h.num;
+    touch(); refreshPrediction();
+  });
+  $('#pred-table').addEventListener('click', e => {
+    const b = e.target.closest('[data-detail]');
+    if (!b) return;
+    const id = b.dataset.detail;
+    const row = $(`[data-detail-row="${id}"]`);
+    const open = row.hidden;
+    row.hidden = !open;
+    b.setAttribute('aria-expanded', open);
+    open ? openDetails.add(id) : openDetails.delete(id);
+  });
+  $('#clear-marks').addEventListener('click', () => {
+    current.horses.forEach(h => { h.mark = ''; });
+    touch(); refreshPrediction();
+  });
   $('#budget').addEventListener('input', renderReco);
   $('#bet-type').addEventListener('click', e => {
     const b = e.target.closest('button[data-type]');

@@ -1,7 +1,7 @@
 // オフラインでも使えるようにアプリ本体をキャッシュする Service Worker
-const CACHE = 'keiba-yosou-v2';
+const CACHE = 'keiba-yosou-v3';
 const ASSETS = [
-  './', './index.html', './style.css', './app.js', './manifest.webmanifest',
+  './', './index.html', './style.css', './app.js', './import.js', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
 ];
 

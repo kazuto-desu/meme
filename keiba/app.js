@@ -739,6 +739,27 @@ function renderImportPreview(res) {
     previewTable(['番', '馬名', '', ...cols.map(c => c[0])], res.rows.map(r => [r.num ?? '—', esc(r.name || ''), st(r), ...cols.map(c => c[1](r))]));
 }
 
+const RACE_FIELD_LABEL = { date: '日付', venue: '競馬場', rnum: 'R', name: 'レース名', grade: '格', surface: '芝/ダ', dist: '距離', going: '馬場' };
+
+function raceInfoPreview(res) {
+  const info = res.raceInfo || {};
+  const keys = Object.keys(info);
+  if (!keys.length) return '';
+  // 今の設定と違う項目だけ強調
+  const diff = keys.filter(k => String(current[k] ?? '') !== String(info[k]));
+  return `<div class="raceinfo-box">
+    <label class="check"><input type="checkbox" id="imp-raceinfo" checked> レース情報も反映する</label>
+    <p class="small"><b>${esc(res.raceInfoText)}</b></p>
+    ${diff.length ? `<p class="muted small">変更される項目：${diff.map(k => RACE_FIELD_LABEL[k]).join('・')}</p>` : '<p class="muted small">現在の設定と同じです</p>'}
+  </div>`;
+}
+
+function applyRaceInfo(info) {
+  ['date', 'venue', 'rnum', 'name', 'grade', 'surface', 'dist', 'going'].forEach(k => {
+    if (info[k] !== undefined && info[k] !== null && info[k] !== '') current[k] = info[k];
+  });
+}
+
 const IMPORT_FIELDS = ['form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
@@ -832,6 +853,13 @@ function init() {
     const r = newRace();
     db.races.push(r); save();
     go('edit', r.id);
+  });
+  $('#new-from-paste').addEventListener('click', () => {
+    const r = newRace();
+    r.name = '';
+    db.races.push(r); save();
+    go('edit', r.id);
+    $('#open-paste').click();
   });
   $('#load-sample').addEventListener('click', () => {
     const r = sampleRace();
@@ -970,9 +998,9 @@ function init() {
         parsed.map(h => [h.num ?? '—', esc(h.name), esc(h.jockey), h.kg ?? '', h.odds ?? '', esc(h.form)]));
     } else {
       impResult = KB.analyze(text, impType, current);
-      $('#imp-preview').innerHTML = renderImportPreview(impResult);
+      $('#imp-preview').innerHTML = raceInfoPreview(impResult) + renderImportPreview(impResult);
     }
-    $('#paste-ok').disabled = !(impResult.rows || impResult.horses).length;
+    $('#paste-ok').disabled = !(impResult.rows || impResult.horses).length && !Object.keys(impResult.raceInfo || {}).length;
   });
   dlg.addEventListener('close', () => {
     if (dlg.returnValue !== 'ok' || !impResult) return;
@@ -986,10 +1014,16 @@ function init() {
       if (!hasNums || list.some((h, i) => h.num !== i + 1)) renumber();
       toast(`${parsed.length}頭を登録しました。`);
     } else {
+      const useInfo = $('#imp-raceinfo')?.checked && Object.keys(impResult.raceInfo || {}).length;
+      if (useInfo) applyRaceInfo(impResult.raceInfo);
       const { added, updated } = applyImport(impResult);
-      toast(`${impResult.label}：${updated}頭を更新${added ? `、${added}頭を追加` : ''}しました。`);
+      const parts = [];
+      if (useInfo) parts.push('レース情報');
+      if (updated) parts.push(`${updated}頭を更新`);
+      if (added) parts.push(`${added}頭を追加`);
+      toast(`${impResult.label}：${parts.join('・') || '変更なし'}`);
     }
-    touch(); renderHorseRows();
+    touch(); renderEdit();
   });
 
   $('#delete-race').addEventListener('click', async () => {

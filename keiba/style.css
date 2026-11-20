@@ -393,3 +393,7 @@ tr.detail td { background: var(--surface-2); white-space: normal; padding: 10px 
 .chip { background: var(--surface); border-radius: 999px; padding: 2px 8px; font-size: .74rem; color: var(--muted); }
 .chip b { color: var(--text); font-variant-numeric: tabular-nums; }
 ul.past { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-variant-numeric: tabular-nums; }
+
+.raceinfo-box { border: 1px solid var(--accent); border-radius: 10px; padding: 4px 12px 8px; margin-bottom: 10px; }
+.raceinfo-box .check { margin: 6px 0 2px; }
+.raceinfo-box p { margin: 2px 0; }

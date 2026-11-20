@@ -76,7 +76,7 @@ const KB = (() => {
       const end = k + 1 < uniq.length ? uniq[k + 1].i : lines.length;
       const head = lines[h.i];
       const body = lines.slice(h.i, end).join('\n');
-      return { name: h.name, num: h.num, head, body };
+      return { name: h.name, num: h.num, head, body, start: h.i };
     });
 
     // 馬名が見つからない場合：行頭の馬番で分割（オッズ表など）
@@ -327,6 +327,83 @@ const KB = (() => {
     return out;
   }
 
+  /* ---------------- レース情報（ページ見出し） ---------------- */
+
+  const NAME_KEY = /チャンピオン|シップ|大賞典|ハードル|ステークス|S$|S\(|賞|カップ|C$|C\(|記念|特別|杯|ダービー|オークス|新馬|未勝利|クラス|オープン|トロフィー|チャレンジ|ハンデキャップ|メイクデビュー|ジャンプ/;
+
+  function gradeOf(t) {
+    const g = t.match(/(?:G|Jpn)\s?(III|II|I|[123])(?![\dA-Za-z])/);
+    if (g) return 'G' + ({ I: 1, II: 2, III: 3 }[g[1]] || g[1]);
+    if (/\(L\)|リステッド|オープン|OP/.test(t)) return 'OP/L';
+    if (/3勝クラス|1600万/.test(t)) return '3勝';
+    if (/2勝クラス|1000万/.test(t)) return '2勝';
+    if (/1勝クラス|500万/.test(t)) return '1勝';
+    if (/未勝利/.test(t)) return '未勝利';
+    if (/新馬|メイクデビュー/.test(t)) return '新馬';
+    return null;
+  }
+
+  /**
+   * ページ先頭（最初の馬より前）からレース条件を読み取る。
+   * 見つかった項目だけを返す：{date, venue, rnum, name, surface, dist, going, grade}
+   */
+  function parseRaceInfo(text, blocks, baseYear) {
+    const lines = text.split('\n').map(l => l.trim());
+    const end = blocks.length && blocks[0].start !== undefined ? blocks[0].start : Math.min(lines.length, 20);
+    const head = lines.slice(0, end).filter(Boolean).join('\n');
+    if (!head) return {};
+    const info = {};
+
+    let dm = head.match(/(\d{4})\s?[年./-]\s?(\d{1,2})\s?[月./-]\s?(\d{1,2})/);
+    if (dm) info.date = `${dm[1]}-${dm[2].padStart(2, '0')}-${dm[3].padStart(2, '0')}`;
+    else if ((dm = head.match(/(\d{1,2})月(\d{1,2})日/))) info.date = `${baseYear}-${dm[1].padStart(2, '0')}-${dm[2].padStart(2, '0')}`;
+
+    const vm = head.match(new RegExp(`\\d回\\s?(${VENUES.join('|')})`)) || head.match(new RegExp(`(${VENUES.join('|')})\\s?\\d{1,2}\\s?R`));
+    info.venue = vm ? vm[1] : VENUES.find(v => head.includes(v)) || undefined;
+
+    const rm = head.match(/(?:^|[^\d.])(\d{1,2})\s?R(?![a-zA-Z])/) || head.match(/第?(\d{1,2})競走/);
+    if (rm && +rm[1] >= 1 && +rm[1] <= 12) info.rnum = +rm[1];
+
+    const sm = head.match(/(芝|ダート|ダ|障害)\s?[・･:：]?\s?(?:[(（]?(?:外|内|右|左|直線|外→内|内2周)[)）]?\s?)*(\d{4})\s?m?/);
+    if (sm) {
+      info.surface = sm[1] === '芝' ? 'turf' : sm[1].startsWith('障') ? undefined : 'dirt';
+      info.dist = +sm[2];
+    }
+
+    const gm = head.match(/(?:馬場(?:状態)?|芝|ダート?)\s?[:：]?\s?(良|稍重|稍|重|不良|不)(?:馬場)?(?![a-zA-Z一-龠])/) || head.match(/(良|稍重|不良)馬場/);
+    const gm2 = gm || head.match(/\d{4}\s?m?\s+(?:[^\s\n]+\s+)?(良|稍重|稍|重|不良|不)(?=\s|$)/);
+    if (gm2) info.going = { '稍': '稍重', '不': '不良' }[gm2[1]] || gm2[1];
+
+    info.grade = gradeOf(head) || undefined;
+
+    // レース名：キーワードを含む語句から、回次・格付け・条件を除く
+    const segs = head.split(/[\n\s]+/).filter(Boolean);
+    const cand = segs.find(x => NAME_KEY.test(x) && !/^\d+R$/.test(x) && !/^(?:\d歳|オープン|\d勝クラス|新馬|未勝利)$/.test(x) && !/^(?:[(（].*[)）])$/.test(x));
+    if (cand) {
+      const name = cand
+        .replace(/[(（]\s?(?:G|Jpn)\s?(?:III|II|I|[123])\s?[)）]/g, '')
+        .replace(/(?:G|Jpn)\s?(?:III|II|I|[123])$/, '')
+        .replace(/[(（]L[)）]/g, '')
+        .replace(/^第\d+回/, '')
+        .trim();
+      if (name) info.name = name;
+    }
+
+    Object.keys(info).forEach(k => info[k] === undefined && delete info[k]);
+    return info;
+  }
+
+  function describeRaceInfo(info) {
+    const parts = [];
+    if (info.date) parts.push(info.date);
+    if (info.venue || info.rnum) parts.push(`${info.venue || ''}${info.rnum ? info.rnum + 'R' : ''}`);
+    if (info.name) parts.push(info.name);
+    if (info.grade) parts.push(info.grade);
+    if (info.surface || info.dist) parts.push(`${info.surface === 'turf' ? '芝' : info.surface === 'dirt' ? 'ダ' : ''}${info.dist || ''}`);
+    if (info.going) parts.push(info.going);
+    return parts.join(' ');
+  }
+
   /* ---------------- まとめ ---------------- */
 
   const LABEL = { past: '過去走', train: '調教', comment: '厩舎コメント', odds: 'オッズ' };
@@ -339,7 +416,10 @@ const KB = (() => {
     if (type === 'auto') type = detectType(rawText);
     const known = race.horses.map(h => ({ id: h.id, num: h.num, name: h.name }));
     const blocks = splitBlocks(text, known);
-    const fn = { past: b => parsePast(b, race), train: parseTrain, comment: parseComment, odds: parseOdds }[type];
+    // ページ見出しのレース条件（距離・コース適性の計算にも使う）
+    const raceInfo = parseRaceInfo(text, blocks, (race.date || '').slice(0, 4) || new Date().getFullYear());
+    const r2 = { ...race, ...raceInfo };
+    const fn = { past: b => parsePast(b, r2), train: parseTrain, comment: parseComment, odds: parseOdds }[type];
     const rows = blocks.map(b => {
       const match = known.find(h => h.name && h.name === b.name) || (b.num && known.find(h => h.num === b.num && (!h.name || !b.name)));
       return { num: b.num ?? match?.num ?? null, name: b.name || match?.name || '', matchId: match?.id || null, data: fn(b) };
@@ -351,10 +431,10 @@ const KB = (() => {
       if (prev) Object.assign(prev.data, Object.fromEntries(Object.entries(r.data).filter(([, v]) => v !== undefined && v !== null && v !== '')));
       else merged.push(r);
     });
-    return { type, label: LABEL[type], rows: merged };
+    return { type, label: LABEL[type], rows: merged, raceInfo, raceInfoText: describeRaceInfo(raceInfo) };
   }
 
-  return { analyze, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
+  return { analyze, parseRaceInfo, describeRaceInfo, detectType, normalize, splitBlocks, parsePast, parseTrain, parseComment, parseOdds, LABEL };
 })();
 
 if (typeof module !== 'undefined') module.exports = KB;

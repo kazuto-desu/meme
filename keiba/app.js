@@ -629,6 +629,16 @@ function refreshPrediction() {
     $('#combo-list').innerHTML = '';
     return;
   }
+  // データの欠け（一部の馬だけ過去走がないと、その馬が不当に低く／高く評価される）
+  const noPast = pred.rows.filter(x => !x.h.form && x.h.rt == null && x.h.si == null);
+  const noOdds = pred.rows.filter(x => num(x.h.odds) == null);
+  const warns = [];
+  if (noPast.length && noPast.length < pred.rows.length) warns.push(`過去走データがない馬が${noPast.length}頭います（${noPast.map(x => x.h.num).sort((a, b) => a - b).join("・")}番）。出馬表を全頭分取り込むと正確になります。`);
+  if (noOdds.length) warns.push(`単勝オッズがない馬が${noOdds.length}頭います。オッズ合成と期待値は全頭そろうと有効になります。`);
+  if (pred.rows.some(x => x.h.oddsKind === '予測')) warns.push('オッズは予測オッズです。発売後に実際のオッズを取り込み直してください。');
+  $('#pred-warn').innerHTML = warns.map(esc).join('<br>');
+  $('#pred-warn').hidden = !warns.length;
+
   const field = r.horses.length;
   const maxP = Math.max(...pred.rows.map(x => x.p));
   const markOpts = (x) => ['', '◎', '○', '▲', '△', '☆', '消'].map(m =>
@@ -641,7 +651,7 @@ function refreshPrediction() {
       <td class="num">${x.index.toFixed(1)}</td>
       <td class="num"><span class="bar"><i style="width:${(x.p / maxP * 100).toFixed(0)}%"></i></span>${pct(x.p)}</td>
       <td class="num">${pct(x.pPlace, 0)}</td>
-      <td class="num col-odds">${num(x.h.odds) ? num(x.h.odds).toFixed(1) : '—'}</td>
+      <td class="num col-odds">${num(x.h.odds) ? num(x.h.odds).toFixed(1) + (x.h.oddsApprox ? '+' : '') : '—'}</td>
       <td class="num ${x.ev === null ? '' : x.ev >= 1 ? 'ev-plus' : 'ev-minus'}">${x.ev === null ? '—' : x.ev.toFixed(2)}</td>
     </tr>
     <tr class="detail"${openDetails.has(x.h.id) ? '' : ' hidden'} data-detail-row="${x.h.id}"><td colspan="8">${detailHtml(x)}</td></tr>`).join('');
@@ -757,7 +767,7 @@ function renderImportPreview(res) {
     past: [['騎手', r => esc(d(r).jockey || '')], ['斤量', r => d(r).kg ?? ''], ['RT', r => d(r).rt ?? ''], ['近走', r => esc(d(r).form || '')], ['SI', r => d(r).si ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['走数', r => (d(r).past || []).length]],
     train: [['評価', r => `<b>${d(r).train}</b>`], ['根拠', r => `<span class="small">${esc(d(r).trainHits)}</span>`], ['短評', r => `<span class="small wrap">${esc(d(r).trainNote)}</span>`]],
     comment: [['陣営', r => `<b>${d(r).camp}</b>`], ['根拠', r => `<span class="small">${esc(d(r).campHits)}</span>`], ['コメント', r => `<span class="small wrap">${esc(d(r).comment)}</span>`]],
-    odds: [['単勝', r => d(r).odds ?? ''], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
+    odds: [['単勝', r => d(r).odds == null ? '' : d(r).odds + (d(r).oddsApprox ? '倍以上' : '') + (d(r).oddsKind ? `<span class="muted small">（${d(r).oddsKind}）</span>` : '')], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
   }[res.type];
   return `<p class="small">判別：<b>${res.label}</b>　${res.rows.length}頭分を検出</p>` +
     previewTable(['番', '馬名', '', ...cols.map(c => c[0])], res.rows.map(r => [r.num ?? '—', esc(r.name || ''), st(r), ...cols.map(c => c[1](r))]));
@@ -784,7 +794,7 @@ function applyRaceInfo(info) {
   });
 }
 
-const IMPORT_FIELDS = ['rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+const IMPORT_FIELDS = ['oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
   let added = 0, updated = 0;
@@ -971,6 +981,7 @@ function init() {
       $('#horse-count').textContent = `${current.horses.filter(x => !x.scratched).length}頭 / 登録${current.horses.length}頭`;
     } else {
       h[f] = NUM_FIELDS.has(f) ? num(el.value) : el.value;
+      if (f === 'odds') { h.oddsApprox = false; h.oddsKind = ''; }
     }
     touch();
   };

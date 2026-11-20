@@ -483,9 +483,10 @@ const KB = (() => {
 
   /* ---------------- オッズ ---------------- */
 
-  function parseOdds(block) {
+  function parseOdds(block, opt = {}) {
     let t = block.body.replace(block.name, ' ');
     const out = {};
+    if (opt.kind) out.oddsKind = opt.kind;
     const rng = t.match(/(\d+\.\d)\s*[-~〜]\s*(\d+\.\d)/);
     if (rng) { out.place = `${rng[1]}-${rng[2]}`; t = t.replace(rng[0], ' '); }
     const pop = t.match(/(\d{1,2})\s?(?:番)?人気/);
@@ -497,6 +498,8 @@ const KB = (() => {
     const pool = cands.filter(v => v >= 1.0);
     const win = pool.length > 1 ? (pool.find(v => !looksKg(v)) ?? pool[0]) : pool[0];
     if (win !== undefined) out.odds = win;
+    // 「50倍以上は☆印」：馬名の後ろの ☆ を下限値として扱う
+    else if (opt.star && new RegExp(`${block.name}\\s*☆`).test(block.body)) { out.odds = opt.star; out.oddsApprox = true; }
     return out;
   }
 
@@ -737,6 +740,8 @@ const KB = (() => {
     const year = (race.date || '').slice(0, 4) || new Date().getFullYear();
     const raceInfo = parseRaceInfo(text, isKb ? [{ start: kbBlocks[0].start }] : blocks, year);
     const r2 = { ...race, ...raceInfo };
+    const starM = text.match(/(\d+)倍以上は☆/);
+    const oddsOpt = { star: starM ? +starM[1] : (/☆/.test(text) && /単勝/.test(text) ? 50 : null), kind: /(?:^|\n)予測(?:\n|$)|予測オッズ/.test(text) ? '予測' : '' };
     const matchOf = (name, num) => known.find(h => h.name && h.name === name) || (num && known.find(h => h.num === num && (!h.name || !name)));
     let rows;
     if (useKb) {
@@ -745,7 +750,7 @@ const KB = (() => {
         return { ...r, matchId: match?.id || null, data: { ...r.data, fromSyutuba: true } };
       });
     } else {
-      const fn = { past: b => parsePast(b, r2), train: parseTrain, comment: b => parseComment(b, r2), odds: parseOdds }[type];
+      const fn = { past: b => parsePast(b, r2), train: parseTrain, comment: b => parseComment(b, r2), odds: b => parseOdds(b, oddsOpt) }[type];
       rows = blocks.map(b => {
         const match = matchOf(b.name, b.num);
         return { num: b.num ?? match?.num ?? null, name: b.name || match?.name || '', matchId: match?.id || null, data: fn(b) };

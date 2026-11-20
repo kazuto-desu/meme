@@ -37,7 +37,7 @@ let db = load();
 function load() {
   try {
     const d = JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-    return { races: d.races || [], weights: { ...DEFAULT_WEIGHTS, ...(d.weights || {}) } };
+    return { races: d.races || [], weights: { ...DEFAULT_WEIGHTS, ...(d.weights || {}) }, seeded: !!d.seeded };
   } catch {
     return { races: [], weights: { ...DEFAULT_WEIGHTS } };
   }
@@ -411,8 +411,10 @@ function recommend(pred, budget) {
 
 let current = null; // 表示中のレース
 
+let view = { name: 'list', id: null };
+
 function route() {
-  const m = location.hash.match(/^#\/(edit|race)\/(\w+)/);
+  const m = view.name === 'list' ? null : [null, view.name, view.id];
   const race = m && db.races.find(r => r.id === m[2]);
   $$('.screen').forEach(s => s.classList.remove('active'));
   $('#nav-back').classList.toggle('hidden', !race);
@@ -435,7 +437,28 @@ function route() {
   window.scrollTo(0, 0);
 }
 
-const go = h => { location.hash = h; };
+/** 画面切り替え：go('list') / go('edit', id) / go('race', id) */
+const go = (name, id = null) => { view = { name, id }; route(); };
+
+/* ---------------- 確認ダイアログ・通知（alert/confirm の代わり） ---------------- */
+
+function ask(message, okLabel = 'OK') {
+  const dlg = $('#ask-dialog');
+  $('#ask-msg').textContent = message;
+  $('#ask-ok').textContent = okLabel;
+  dlg.returnValue = '';
+  dlg.showModal();
+  return new Promise(res => dlg.addEventListener('close', () => res(dlg.returnValue === 'ok'), { once: true }));
+}
+
+let toastTimer = null;
+function toast(message) {
+  const el = $('#toast');
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+}
 
 function raceTitle(r) {
   return `${r.venue}${r.rnum ? r.rnum + 'R' : ''} ${r.name || '(レース名未設定)'}`;
@@ -675,7 +698,7 @@ function parsePaste(text) {
 
 function sampleRace() {
   const r = newRace();
-  Object.assign(r, { name: 'サンプル記念', venue: '東京', rnum: 11, surface: 'turf', dist: 2400, going: '良', grade: 'G1' });
+  Object.assign(r, { name: 'サンプル記念（例）', venue: '東京', rnum: 11, surface: 'turf', dist: 2400, going: '良', grade: 'G1' });
   const data = [
     // 名前, 騎手, 斤量, 単勝, 近走, 上り順, 騎手力, 距離, コース, 道悪, 調教, 体重±, 間隔
     ['アオゾラロード', '青木', 58, 3.1, '1-1-2', 1, 5, 5, 4, 3, 'A', 2, 8],
@@ -708,48 +731,67 @@ function sampleRace() {
 function init() {
   $('#r-venue').innerHTML = VENUES.map(v => `<option>${v}</option>`).join('');
 
-  window.addEventListener('hashchange', route);
-  $('#nav-back').addEventListener('click', () => go('#/'));
+  $('#nav-back').addEventListener('click', () => go('list'));
 
   // 一覧
   $('#new-race').addEventListener('click', () => {
     const r = newRace();
     db.races.push(r); save();
-    go(`#/edit/${r.id}`);
+    go('edit', r.id);
   });
   $('#load-sample').addEventListener('click', () => {
     const r = sampleRace();
     db.races.push(r); save();
-    go(`#/race/${r.id}`);
+    go('race', r.id);
   });
   $('#race-list').addEventListener('click', e => {
     const b = e.target.closest('button[data-id]');
-    if (b) go(`#/race/${b.dataset.id}`);
+    if (b) go('race', b.dataset.id);
   });
 
   $('#export-json').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+    $('#export-text').value = JSON.stringify(db);
+    $('#export-dialog').showModal();
+  });
+  $('#export-copy').addEventListener('click', async () => {
+    const ta = $('#export-text');
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      toast('コピーしました。メモ帳などに貼り付けて保存してください。');
+    } catch {
+      ta.focus(); ta.select();
+      toast('自動コピーできませんでした。選択された文字を長押し／Ctrl+C でコピーしてください。');
+    }
+  });
+  $('#export-download').addEventListener('click', () => {
+    const blob = new Blob([$('#export-text').value], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `keiba-yosou-${today()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
-  $('#import-json').addEventListener('change', async e => {
-    const f = e.target.files[0];
-    if (!f) return;
+  const importText = text => {
     try {
-      const d = JSON.parse(await f.text());
-      if (!Array.isArray(d.races)) throw new Error('races がありません');
+      const d = JSON.parse(text);
+      if (!Array.isArray(d.races)) throw new Error('レースのデータが見つかりません');
       const ids = new Set(db.races.map(r => r.id));
       const add = d.races.filter(r => r && r.id && Array.isArray(r.horses) && !ids.has(r.id));
       db.races.push(...add);
       if (d.weights) db.weights = { ...DEFAULT_WEIGHTS, ...d.weights };
       save(); renderList();
-      alert(`${add.length} 件のレースを読み込みました。`);
+      toast(`${add.length} 件のレースを読み込みました。`);
     } catch (err) {
-      alert('読み込みに失敗しました：' + err.message);
+      toast('読み込めませんでした：' + err.message);
     }
+  };
+  $('#import-paste').addEventListener('click', () => { $('#import-text').value = ''; $('#import-dialog').showModal(); });
+  $('#import-dialog').addEventListener('close', () => {
+    if ($('#import-dialog').returnValue === 'ok') importText($('#import-text').value);
+  });
+  $('#import-json').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (f) importText(await f.text());
     e.target.value = '';
   });
 
@@ -786,16 +828,16 @@ function init() {
   };
   tbody.addEventListener('input', onHorse);
   tbody.addEventListener('change', onHorse);
-  tbody.addEventListener('click', e => {
+  tbody.addEventListener('click', async e => {
     const b = e.target.closest('[data-del]');
     if (!b) return;
     const h = current.horses.find(x => x.id === b.dataset.del);
-    if (h.name && !confirm(`${h.num}番 ${h.name} を削除しますか？（馬番は詰められます）`)) return;
+    if (h.name && !(await ask(`${h.num}番 ${h.name} を削除しますか？（後ろの馬番は1つずつ繰り上がります）`, '削除'))) return;
     current.horses = current.horses.filter(x => x.id !== b.dataset.del);
     renumber(); touch(); renderHorseRows();
   });
   $('#add-horse').addEventListener('click', () => {
-    if (current.horses.length >= 18) { alert('JRA のフルゲートは最大18頭です。'); return; }
+    if (current.horses.length >= 18) { toast('JRA のフルゲートは最大18頭です。'); return; }
     current.horses.push(newHorse(current.horses.length + 1));
     touch(); renderHorseRows();
     $('#horse-table tbody tr:last-child input[data-f=name]').focus();
@@ -817,15 +859,15 @@ function init() {
     touch(); renderHorseRows();
   });
 
-  $('#delete-race').addEventListener('click', () => {
-    if (!confirm('このレースを削除しますか？')) return;
+  $('#delete-race').addEventListener('click', async () => {
+    if (!(await ask('このレースを削除しますか？元に戻せません。', '削除'))) return;
     db.races = db.races.filter(r => r !== current);
-    save(); go('#/');
+    save(); go('list');
   });
-  $('#go-predict').addEventListener('click', () => go(`#/race/${current.id}`));
+  $('#go-predict').addEventListener('click', () => go('race', current.id));
 
   // 予想
-  $('#edit-race').addEventListener('click', () => go(`#/edit/${current.id}`));
+  $('#edit-race').addEventListener('click', () => go('edit', current.id));
   $('#budget').addEventListener('input', renderReco);
   $('#bet-type').addEventListener('click', e => {
     const b = e.target.closest('button[data-type]');
@@ -858,6 +900,14 @@ function init() {
     touch(); renderResultSummary();
   };
   ['#res-1', '#res-2', '#res-3', '#res-bet', '#res-pay'].forEach(s => $(s).addEventListener('input', onResult));
+
+  // 初回起動時はサンプルレースを1件入れておく
+  if (!db.seeded) {
+    db.seeded = true;
+    if (!db.races.length) db.races.push(sampleRace());
+    save();
+  }
+  $('#guide').open = db.races.length <= 1;
 
   route();
 }

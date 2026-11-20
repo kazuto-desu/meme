@@ -11,6 +11,7 @@
   --good: #7ad39b;
   --bad: #ef7d7d;
   --radius: 14px;
+  color-scheme: dark;
   /* 枠色 */
   --w1: #ffffff; --w1i: #111;
   --w2: #222222; --w2i: #fff;
@@ -23,7 +24,7 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #f3f6f2;
     --surface: #ffffff;
     --surface-2: #e8eee8;
@@ -36,7 +37,23 @@
     --good: #1f8a4c;
     --bad: #c62828;
     --w1: #ffffff; --w1i: #111;
+    color-scheme: light;
   }
+}
+:root[data-theme="light"] {
+  --bg: #f3f6f2;
+    --surface: #ffffff;
+    --surface-2: #e8eee8;
+    --line: #d5ded6;
+    --text: #17221b;
+    --muted: #5b6d61;
+    --accent: #1f8a4c;
+    --accent-ink: #ffffff;
+    --gold: #b7860b;
+    --good: #1f8a4c;
+    --bad: #c62828;
+    --w1: #ffffff; --w1i: #111;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -53,6 +70,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
 .hidden { display: none !important; }
+[hidden] { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 0.8rem; line-height: 1.6; }
 .center { text-align: center; }
@@ -61,13 +79,14 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-
 /* ---------- アプリバー ---------- */
 .appbar {
   position: sticky;
-  top: 0;
+  top: env(safe-area-inset-top, 0px);
   z-index: 10;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
-  padding-top: max(10px, env(safe-area-inset-top));
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -79,7 +98,14 @@ code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-
 }
 .icon-btn:hover { background: var(--surface-2); }
 
-.screen { display: none; max-width: 980px; margin: 0 auto; padding: 16px 16px 96px; }
+.screen {
+  display: none;
+  max-width: 980px;
+  margin: 0 auto;
+  padding-block: 16px 96px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
 .screen.active { display: block; }
 
 /* ---------- 共通部品 ---------- */
@@ -259,8 +285,10 @@ td { padding: 4px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  padding: 10px 16px;
-  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  padding-top: 10px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: var(--surface);
   border-top: 1px solid var(--line);
   z-index: 10;
@@ -290,4 +318,43 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   .pred-table .bar { display: none; }
   .pred-table .mark { width: 1.4em; }
   .pred-table .col-odds { display: none; }
+}
+
+/* ---------- はじめかた ---------- */
+.guide > summary { color: var(--accent); }
+.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; display: grid; gap: 12px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 2rem 1fr; gap: 2px 10px; }
+.steps li::before {
+  content: counter(s);
+  grid-row: span 2;
+  display: grid; place-items: center;
+  width: 2rem; height: 2rem; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); font-weight: 700;
+}
+.steps b { font-size: .95rem; }
+.steps span { font-size: .85rem; color: var(--muted); line-height: 1.6; }
+
+/* ---------- 通知 ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: .88rem;
+  z-index: 50;
+  box-shadow: 0 6px 20px rgba(0,0,0,.3);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto;
+  height: env(safe-area-inset-top, 0px);
+  z-index: 10;
+  background: var(--surface);
 }

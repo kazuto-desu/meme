@@ -13,7 +13,9 @@ const VENUES = ['札幌', '函館', '福島', '新潟', '東京', '中山', '中
 const MARK_ORDER = ['◎', '○', '▲', '△', '☆'];
 
 const WEIGHT_DEFS = [
-  { key: 'form',     label: '近走成績',     def: 25 },
+  { key: 'form',     label: '近走成績',     def: 20 },
+  { key: 'rating',   label: 'レイティング(RT)', def: 12, note: '競馬ブックの RT。出走馬の中での相対評価' },
+  { key: 'speed',    label: 'スピード指数', def: 12, note: '直近3走の上位2つの平均。出走馬の中での相対評価' },
   { key: 'agari',    label: '上がり(末脚)', def: 10 },
   { key: 'jockey',   label: '騎手',         def: 12 },
   { key: 'dist',     label: '距離適性',     def: 12 },
@@ -79,6 +81,7 @@ function newHorse(n) {
     id: uid(), num: n, name: '', jockey: '', kg: null, odds: null,
     form: '', agari: null, jrank: 3, dist: 3, course: 3, mud: 3,
     train: 'B', bw: null, weeks: null, scratched: false,
+    rt: null, si: null, formAdj: null, blinker: false, cpu: '', style: '', sexAge: '', stable: '', record: '', sire: '',
     camp: 3, mark: '', comment: '', campHits: '', trainNote: '', trainHits: '', past: [], place: '', pop: null,
   };
 }
@@ -180,6 +183,12 @@ function intervalValue(w) {
 
 const GOING_MUD = { '良': 0.3, '稍重': 1, '重': 1.6, '不良': 2.2 };
 
+/** 陣営評価：コメント取り込み済みなら今の馬場で再計算、手入力ならその値 */
+function campNow(h, going) {
+  if (h.campBase != null && typeof KB !== 'undefined') return KB.campFor(h.campBase, h.campPrefs, going).camp;
+  return h.camp ?? 3;
+}
+
 /**
  * レースを予想する。
  * @returns {{rows: Array, active: Array, marketUsed: boolean, harville: object}}
@@ -194,7 +203,20 @@ function predict(race, W) {
   const kgMean = kgs.length ? kgs.reduce((a, b) => a + b, 0) / kgs.length : null;
   const mudW = W.mud * (GOING_MUD[race.going] ?? 1);
 
+  // 出走馬内の相対値（最小0〜最大1、データなしは 0.4）
+  const rel = key => {
+    const vals = active.map(h => num(h[key])).filter(v => v !== null);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return h => {
+      const v = num(h[key]);
+      if (v === null || vals.length < 2) return vals.length < 2 ? 0.5 : 0.4;
+      return hi > lo ? (v - lo) / (hi - lo) : 0.5;
+    };
+  };
+  const relRt = rel('rt'), relSi = rel('si');
+
   const factorWeights = {
+    rating: W.rating ?? 0, speed: W.speed ?? 0,
     form: W.form, agari: W.agari, jockey: W.jockey, dist: W.dist, course: W.course,
     mud: mudW, train: W.train, frame: W.frame, kg: W.kg, bw: W.bw, interval: W.interval, camp: W.camp ?? 0,
   };
@@ -204,7 +226,7 @@ function predict(race, W) {
     const pos = field > 1 ? (h.num - 1) / (field - 1) : 0.5;
     const kg = num(h.kg);
     const v = {
-      form: formValue(h.form),
+      form: h.formAdj != null ? h.formAdj : formValue(h.form),
       agari: agariValue(num(h.agari)),
       jockey: five(h.jrank),
       dist: five(h.dist),
@@ -215,7 +237,9 @@ function predict(race, W) {
       kg: kg === null || kgMean === null ? 0.5 : clamp(0.5 - (kg - kgMean) * 0.12, 0, 1),
       bw: bwValue(num(h.bw)),
       interval: intervalValue(num(h.weeks)),
-      camp: five(h.camp ?? 3),
+      camp: five(campNow(h, race.going)),
+      rating: relRt(h),
+      speed: relSi(h),
     };
     let s = 0;
     for (const k in factorWeights) s += factorWeights[k] * v[k];
@@ -564,13 +588,15 @@ function renderHorseRows() {
       <td><input class="w-sm" data-f="kg" type="number" step="0.5" inputmode="decimal" value="${h.kg ?? ''}"></td>
       <td><input class="w-sm" data-f="odds" type="number" step="0.1" min="1" inputmode="decimal" value="${h.odds ?? ''}"></td>
       <td><input class="w-form" data-f="form" value="${esc(h.form)}" placeholder="1-3-5"></td>
+      <td><input class="w-sm" data-f="rt" type="number" step="0.1" inputmode="decimal" value="${h.rt ?? ''}"></td>
+      <td><input class="w-xs" data-f="si" type="number" inputmode="numeric" value="${h.si ?? ''}"></td>
       <td><input class="w-xs" data-f="agari" type="number" min="1" max="18" inputmode="numeric" value="${h.agari ?? ''}"></td>
       <td><select data-f="jrank">${opt([1, 2, 3, 4, 5], h.jrank)}</select></td>
       <td><select data-f="dist">${opt([1, 2, 3, 4, 5], h.dist)}</select></td>
       <td><select data-f="course">${opt([1, 2, 3, 4, 5], h.course)}</select></td>
       <td><select data-f="mud">${opt([1, 2, 3, 4, 5], h.mud)}</select></td>
       <td><select data-f="train">${opt(['A', 'B', 'C', 'D'], h.train)}</select></td>
-      <td><select data-f="camp">${opt([1, 2, 3, 4, 5], h.camp ?? 3)}</select></td>
+      <td><select data-f="camp">${opt([1, 2, 3, 4, 5], campNow(h, r.going))}</select></td>
       <td><input class="w-xs" data-f="bw" type="number" step="2" inputmode="numeric" value="${h.bw ?? ''}" placeholder="±"></td>
       <td><input class="w-xs" data-f="weeks" type="number" min="0" inputmode="numeric" value="${h.weeks ?? ''}"></td>
       <td><input data-f="scratched" type="checkbox"${h.scratched ? ' checked' : ''} aria-label="出走取消"></td>
@@ -578,7 +604,7 @@ function renderHorseRows() {
     </tr>`).join('');
 }
 
-const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud', 'camp']);
+const NUM_FIELDS = new Set(['kg', 'odds', 'agari', 'bw', 'weeks', 'jrank', 'dist', 'course', 'mud', 'camp', 'rt', 'si']);
 
 function touch() { current.updated = Date.now(); save(); }
 
@@ -590,7 +616,8 @@ let betType = 'umaren';
 
 function renderPredict() {
   const r = current;
-  $('#race-head').innerHTML = `<p class="title">${esc(raceTitle(r))}</p><p class="meta">${esc(raceMeta(r))}　枠：${{ inner: '内有利', outer: '外有利', flat: 'フラット' }[effectiveBias(r)]}</p>`;
+  $('#race-head').innerHTML = `<p class="title">${esc(raceTitle(r))}</p><p class="meta">${esc(raceMeta(r))}　枠：${{ inner: '内有利', outer: '外有利', flat: 'フラット' }[effectiveBias(r)]}</p>
+    <div class="going-row"><span class="muted small">馬場</span><div class="seg going-seg" id="going-seg">${['良', '稍重', '重', '不良'].map(g => `<button data-going="${g}" class="${r.going === g ? 'on' : ''}">${g}</button>`).join('')}</div></div>`;
   renderWeights();
   renderResultForm();
   refreshPrediction();
@@ -609,6 +636,16 @@ function refreshPrediction() {
     $('#combo-list').innerHTML = '';
     return;
   }
+  // データの欠け（一部の馬だけ過去走がないと、その馬が不当に低く／高く評価される）
+  const noPast = pred.rows.filter(x => !x.h.form && x.h.rt == null && x.h.si == null);
+  const noOdds = pred.rows.filter(x => num(x.h.odds) == null);
+  const warns = [];
+  if (noPast.length && noPast.length < pred.rows.length) warns.push(`過去走データがない馬が${noPast.length}頭います（${noPast.map(x => x.h.num).sort((a, b) => a - b).join("・")}番）。出馬表を全頭分取り込むと正確になります。`);
+  if (noOdds.length) warns.push(`単勝オッズがない馬が${noOdds.length}頭います。オッズ合成と期待値は全頭そろうと有効になります。`);
+  if (pred.rows.some(x => x.h.oddsKind === '予測')) warns.push('オッズは予測オッズです。発売後に実際のオッズを取り込み直してください。');
+  $('#pred-warn').innerHTML = warns.map(esc).join('<br>');
+  $('#pred-warn').hidden = !warns.length;
+
   const field = r.horses.length;
   const maxP = Math.max(...pred.rows.map(x => x.p));
   const markOpts = (x) => ['', '◎', '○', '▲', '△', '☆', '消'].map(m =>
@@ -621,7 +658,7 @@ function refreshPrediction() {
       <td class="num">${x.index.toFixed(1)}</td>
       <td class="num"><span class="bar"><i style="width:${(x.p / maxP * 100).toFixed(0)}%"></i></span>${pct(x.p)}</td>
       <td class="num">${pct(x.pPlace, 0)}</td>
-      <td class="num col-odds">${num(x.h.odds) ? num(x.h.odds).toFixed(1) : '—'}</td>
+      <td class="num col-odds">${num(x.h.odds) ? num(x.h.odds).toFixed(1) + (x.h.oddsApprox ? '+' : '') : '—'}</td>
       <td class="num ${x.ev === null ? '' : x.ev >= 1 ? 'ev-plus' : 'ev-minus'}">${x.ev === null ? '—' : x.ev.toFixed(2)}</td>
     </tr>
     <tr class="detail"${openDetails.has(x.h.id) ? '' : ' hidden'} data-detail-row="${x.h.id}"><td colspan="8">${detailHtml(x)}</td></tr>`).join('');
@@ -644,17 +681,21 @@ function detailHtml(x) {
   const h = x.h;
   const goingShort = g => ({ '稍重': '稍', '不良': '不' }[g] || g || '');
   const past = (h.past || []).slice(0, 5).map(p => `
-    <li><span class="muted">${esc(p.date || '')}</span> ${esc(p.venue || '')} ${p.surface === 'turf' ? '芝' : p.surface === 'dirt' ? 'ダ' : ''}${p.dist || ''} ${goingShort(p.going)}
-      <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}
-      ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.weight ? ` ${p.weight}kg` : ''}</li>`).join('');
+    <li><span class="muted">${esc(p.date || '')}</span> ${esc(p.venue || '')} ${esc(p.race || '')}${p.grade ? `(${esc(p.grade)})` : ''} ${p.surface === 'turf' ? '芝' : p.surface === 'dirt' ? 'ダ' : ''}${p.dist || ''} ${goingShort(p.going)}
+      <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}${p.pop ? ` ${p.pop}人` : ''}
+      ${p.margin !== undefined ? `<span class="muted">${p.finish === 1 ? '+' : ''}${p.margin}秒</span>` : ''}
+      ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.pos4 ? ` 4角${esc(p.pos4)}` : ''}${p.si ? ` <b>S${p.si}</b>` : ''}${p.weight ? ` ${p.weight}kg` : ''}${p.jockey ? ` <span class="muted">${esc(p.jockey)} ${p.kg ?? ''}</span>` : ''}</li>`).join('');
+  const prof = [h.sexAge, h.blinker ? 'ブリンカー' : '', h.sire ? `父${h.sire}` : '', h.stable, h.record ? `通算${h.record}` : '', h.style ? `脚質:${h.style}` : '', h.rt ? `RT${h.rt}` : '', h.cpu ? `CPU${h.cpu}` : '']
+    .filter(Boolean).map(esc).join('　');
   const f = x.v || {};
   const factor = (label, v) => `<span class="chip">${label} <b>${Math.round((v ?? 0.5) * 100)}</b></span>`;
   return `<div class="detail-body">
-    <div class="chips">${factor('近走', f.form)}${factor('末脚', f.agari)}${factor('騎手', f.jockey)}${factor('距離', f.dist)}${factor('コース', f.course)}${factor('道悪', f.mud)}${factor('調教', f.train)}${factor('陣営', f.camp)}${factor('枠', f.frame)}${factor('ローテ', f.interval)}</div>
+    ${prof ? `<p class="small">${prof}</p>` : ''}
+    <div class="chips">${factor('RT', f.rating)}${factor('S指数', f.speed)}${factor('近走', f.form)}${factor('末脚', f.agari)}${factor('騎手', f.jockey)}${factor('距離', f.dist)}${factor('コース', f.course)}${factor('道悪', f.mud)}${factor('調教', f.train)}${factor('陣営', f.camp)}${factor('枠', f.frame)}${factor('ローテ', f.interval)}</div>
     ${past ? `<div><h4>過去走</h4><ul class="past">${past}</ul></div>` : ''}
     <div><h4>調教 <span class="grade">${esc(h.train || 'B')}</span></h4>
       ${h.trainNote ? `<p>${esc(h.trainNote)}</p>` : ''}${h.trainHits ? `<p class="muted small">根拠：${esc(h.trainHits)}</p>` : ''}${!h.trainNote && !h.trainHits ? '<p class="muted small">未取り込み</p>' : ''}</div>
-    <div><h4>厩舎コメント <span class="grade">${h.camp ?? 3}</span></h4>
+    <div><h4>厩舎コメント <span class="grade">${campNow(h, current.going)}</span>${h.campBase != null ? `<span class="muted small">（${esc(current.going)}での評価）</span>` : ''}</h4>
       ${h.comment ? `<p>${esc(h.comment)}</p>` : '<p class="muted small">未取り込み</p>'}${h.campHits ? `<p class="muted small">根拠：${esc(h.campHits)}</p>` : ''}</div>
     ${h.place || h.pop ? `<p class="small">複勝 ${esc(h.place || '—')}　${h.pop ? h.pop + '番人気' : ''}</p>` : ''}
   </div>`;
@@ -730,16 +771,37 @@ function renderImportPreview(res) {
   const st = r => r.matchId ? '<span class="tag">更新</span>' : r.name ? '<span class="tag new">新規</span>' : '<span class="tag skip">対象なし</span>';
   const d = r => r.data;
   const cols = {
-    past: [['近走', r => esc(d(r).form || '')], ['上り順', r => d(r).agari ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['斤量', r => d(r).kg ?? ''], ['走数', r => (d(r).past || []).length]],
+    past: [['騎手', r => esc(d(r).jockey || '')], ['斤量', r => d(r).kg ?? ''], ['RT', r => d(r).rt ?? ''], ['近走', r => esc(d(r).form || '')], ['SI', r => d(r).si ?? ''], ['距離', r => d(r).dist ?? ''], ['コース', r => d(r).course ?? ''], ['道悪', r => d(r).mud ?? ''], ['間隔週', r => d(r).weeks ?? ''], ['走数', r => (d(r).past || []).length]],
     train: [['評価', r => `<b>${d(r).train}</b>`], ['根拠', r => `<span class="small">${esc(d(r).trainHits)}</span>`], ['短評', r => `<span class="small wrap">${esc(d(r).trainNote)}</span>`]],
     comment: [['陣営', r => `<b>${d(r).camp}</b>`], ['根拠', r => `<span class="small">${esc(d(r).campHits)}</span>`], ['コメント', r => `<span class="small wrap">${esc(d(r).comment)}</span>`]],
-    odds: [['単勝', r => d(r).odds ?? ''], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
+    odds: [['単勝', r => d(r).odds == null ? '' : d(r).odds + (d(r).oddsApprox ? '倍以上' : '') + (d(r).oddsKind ? `<span class="muted small">（${d(r).oddsKind}）</span>` : '')], ['複勝', r => esc(d(r).place || '')], ['人気', r => d(r).pop ?? '']],
   }[res.type];
   return `<p class="small">判別：<b>${res.label}</b>　${res.rows.length}頭分を検出</p>` +
     previewTable(['番', '馬名', '', ...cols.map(c => c[0])], res.rows.map(r => [r.num ?? '—', esc(r.name || ''), st(r), ...cols.map(c => c[1](r))]));
 }
 
-const IMPORT_FIELDS = ['form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+const RACE_FIELD_LABEL = { date: '日付', venue: '競馬場', rnum: 'R', name: 'レース名', grade: '格', surface: '芝/ダ', dist: '距離', going: '馬場' };
+
+function raceInfoPreview(res) {
+  const info = res.raceInfo || {};
+  const keys = Object.keys(info);
+  if (!keys.length) return '';
+  // 今の設定と違う項目だけ強調
+  const diff = keys.filter(k => String(current[k] ?? '') !== String(info[k]));
+  return `<div class="raceinfo-box">
+    <label class="check"><input type="checkbox" id="imp-raceinfo" checked> レース情報も反映する</label>
+    <p class="small"><b>${esc(res.raceInfoText)}</b></p>
+    ${diff.length ? `<p class="muted small">変更される項目：${diff.map(k => RACE_FIELD_LABEL[k]).join('・')}</p>` : '<p class="muted small">現在の設定と同じです</p>'}
+  </div>`;
+}
+
+function applyRaceInfo(info) {
+  ['date', 'venue', 'rnum', 'name', 'grade', 'surface', 'dist', 'going'].forEach(k => {
+    if (info[k] !== undefined && info[k] !== null && info[k] !== '') current[k] = info[k];
+  });
+}
+
+const IMPORT_FIELDS = ['campBase', 'campPrefs', 'formAdj', 'blinker', 'oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
   let added = 0, updated = 0;
@@ -757,7 +819,9 @@ function applyImport(res) {
     if (!h.name && row.name) h.name = row.name;
     const d = row.data;
     IMPORT_FIELDS.forEach(k => { if (d[k] !== undefined && d[k] !== null && d[k] !== '') h[k] = d[k]; });
-    if (d.kg && h.kg == null) h.kg = d.kg;
+    // 出馬表由来の斤量・騎手は当日のものなので上書き、それ以外は空欄のときだけ
+    if (d.kg && (d.fromSyutuba || h.kg == null)) h.kg = d.kg;
+    if (d.jockey && (d.fromSyutuba || !h.jockey)) h.jockey = d.jockey;
   });
   // 名前もデータもない空欄行は取り除く
   if (current.horses.some(h => h.name)) {
@@ -832,6 +896,13 @@ function init() {
     const r = newRace();
     db.races.push(r); save();
     go('edit', r.id);
+  });
+  $('#new-from-paste').addEventListener('click', () => {
+    const r = newRace();
+    r.name = '';
+    db.races.push(r); save();
+    go('edit', r.id);
+    $('#open-paste').click();
   });
   $('#load-sample').addEventListener('click', () => {
     const r = sampleRace();
@@ -917,6 +988,10 @@ function init() {
       $('#horse-count').textContent = `${current.horses.filter(x => !x.scratched).length}頭 / 登録${current.horses.length}頭`;
     } else {
       h[f] = NUM_FIELDS.has(f) ? num(el.value) : el.value;
+      if (f === 'odds') { h.oddsApprox = false; h.oddsKind = ''; }
+      if (f === 'form') h.formAdj = null; // 手で直したら着順だけで評価
+      if (f === 'camp') h.campBase = null; // 手で直したらその値を使う
+
     }
     touch();
   };
@@ -970,9 +1045,9 @@ function init() {
         parsed.map(h => [h.num ?? '—', esc(h.name), esc(h.jockey), h.kg ?? '', h.odds ?? '', esc(h.form)]));
     } else {
       impResult = KB.analyze(text, impType, current);
-      $('#imp-preview').innerHTML = renderImportPreview(impResult);
+      $('#imp-preview').innerHTML = raceInfoPreview(impResult) + renderImportPreview(impResult);
     }
-    $('#paste-ok').disabled = !(impResult.rows || impResult.horses).length;
+    $('#paste-ok').disabled = !(impResult.rows || impResult.horses).length && !Object.keys(impResult.raceInfo || {}).length;
   });
   dlg.addEventListener('close', () => {
     if (dlg.returnValue !== 'ok' || !impResult) return;
@@ -986,10 +1061,16 @@ function init() {
       if (!hasNums || list.some((h, i) => h.num !== i + 1)) renumber();
       toast(`${parsed.length}頭を登録しました。`);
     } else {
+      const useInfo = $('#imp-raceinfo')?.checked && Object.keys(impResult.raceInfo || {}).length;
+      if (useInfo) applyRaceInfo(impResult.raceInfo);
       const { added, updated } = applyImport(impResult);
-      toast(`${impResult.label}：${updated}頭を更新${added ? `、${added}頭を追加` : ''}しました。`);
+      const parts = [];
+      if (useInfo) parts.push('レース情報');
+      if (updated) parts.push(`${updated}頭を更新`);
+      if (added) parts.push(`${added}頭を追加`);
+      toast(`${impResult.label}：${parts.join('・') || '変更なし'}`);
     }
-    touch(); renderHorseRows();
+    touch(); renderEdit();
   });
 
   $('#delete-race').addEventListener('click', async () => {
@@ -1001,6 +1082,14 @@ function init() {
 
   // 予想
   $('#edit-race').addEventListener('click', () => go('edit', current.id));
+  $('#race-head').addEventListener('click', e => {
+    const b = e.target.closest('[data-going]');
+    if (!b || current.going === b.dataset.going) return;
+    current.going = b.dataset.going;
+    touch();
+    renderPredict();
+    toast(`馬場を「${current.going}」にして再計算しました。`);
+  });
   $('#pred-table').addEventListener('change', e => {
     const sel = e.target.closest('[data-mark]');
     if (!sel) return;

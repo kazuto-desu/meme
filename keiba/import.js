@@ -202,6 +202,10 @@ const KB = (() => {
 
     const fin = runs.filter(r => r.finish !== undefined);
     if (fin.length) out.form = fin.slice(0, 5).map(r => r.finish).join('-');
+    if (fin.length && runs.some(r => r.grade || r.race)) {
+      const fa = formAdjusted(runs, race);
+      if (fa !== null) out.formAdj = fa;
+    }
 
     const last = runs[0];
     if (last.agariRank) out.agari = last.agariRank;
@@ -234,6 +238,33 @@ const KB = (() => {
     const mv = rated(runs.filter(r => ['稍重', '重', '不良'].includes(r.going)), r => (r.going === '稍重' ? 0.6 : 1));
     if (mv) out.mud = mv;
     return out;
+  }
+
+  /** クラスの格付け（数字が大きいほど上） */
+  const CLASS_LV = { G1: 6, G2: 5, G3: 4, 'OP/L': 3, L: 3, OP: 3, '3勝': 2, '2勝': 1, '1勝': 0, '未勝利': -1, '新馬': -1 };
+  function runLevel(r) {
+    if (r.grade && CLASS_LV[r.grade] !== undefined) return CLASS_LV[r.grade];
+    const m = (r.race || '').match(/([123])勝/);
+    if (m) return CLASS_LV[m[1] + '勝'];
+    if (/未勝|新馬/.test(r.race || '')) return -1;
+    return 3; // 「関越S」など格付けなしの特別はオープン扱い
+  }
+
+  /** 近走の評価（0〜1）：着順を今回のクラスとの差で補正し、新しい走ほど重く */
+  function formAdjusted(runs, race) {
+    const today = CLASS_LV[race.grade] ?? 3;
+    const rec = [0.35, 0.27, 0.2, 0.12, 0.06];
+    let s = 0, w = 0;
+    runs.slice(0, 5).forEach((r, i) => {
+      if (r.finish === undefined) return;
+      const diff = runLevel(r) - today;
+      // 格上で掲示板（5着以内）は加点、格下の好走は割り引き
+      let v = finishVal(r.finish);
+      if (diff > 0 && r.finish !== '中' && r.finish <= 9) v = Math.min(1, v * (1 + 0.12 * diff) + 0.04 * diff);
+      if (diff < 0) v *= Math.max(0.55, 1 + 0.15 * diff);
+      s += v * rec[i]; w += rec[i];
+    });
+    return w ? Math.round((s / w) * 1000) / 1000 : null;
   }
 
   const fmtDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -600,7 +631,11 @@ const KB = (() => {
     const km = (L[i] || '').match(/^(\d{2}(?:\.\d)?)\s*(.*)$/);
     if (km && sx > i) {
       out.kg = parseFloat(km[1]);
-      out.jockey = (km[2] + L.slice(i + 1, sx).join('')).replace(/\s/g, '');
+      let jk = [km[2], ...L.slice(i + 1, sx)].join('\n');
+      // 騎手名の前の「B」はブリンカー着用
+      if (/(?:^|\n)B(?:\s|\n|$)/.test(jk)) { out.blinker = true; jk = jk.replace(/(?:^|\n)B(?=\s|\n|$)/, ''); }
+      // 縦書きの長音「ー」が「|」「｜」で来る
+      out.jockey = jk.replace(/[|｜│]/g, 'ー').replace(/\s/g, '');
     }
     if (sx >= 0) {
       const sa = L[sx].match(SEX_AGE);
@@ -633,7 +668,7 @@ const KB = (() => {
       const data = summarizeRuns(runs, race);
       Object.assign(data, {
         kg: out.kg, jockey: out.jockey, rt: out.rt, cpu: out.cpu, style: out.style,
-        sexAge: out.sexAge, stable: out.stable, record: out.record, sire: out.sire,
+        blinker: !!out.blinker, sexAge: out.sexAge, stable: out.stable, record: out.record, sire: out.sire,
       });
       return { num: out.num, name: out.name || '', data };
     });

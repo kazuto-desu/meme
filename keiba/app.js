@@ -81,7 +81,7 @@ function newHorse(n) {
     id: uid(), num: n, name: '', jockey: '', kg: null, odds: null,
     form: '', agari: null, jrank: 3, dist: 3, course: 3, mud: 3,
     train: 'B', bw: null, weeks: null, scratched: false,
-    rt: null, si: null, cpu: '', style: '', sexAge: '', stable: '', record: '', sire: '',
+    rt: null, si: null, formAdj: null, blinker: false, cpu: '', style: '', sexAge: '', stable: '', record: '', sire: '',
     camp: 3, mark: '', comment: '', campHits: '', trainNote: '', trainHits: '', past: [], place: '', pop: null,
   };
 }
@@ -220,7 +220,7 @@ function predict(race, W) {
     const pos = field > 1 ? (h.num - 1) / (field - 1) : 0.5;
     const kg = num(h.kg);
     const v = {
-      form: formValue(h.form),
+      form: h.formAdj != null ? h.formAdj : formValue(h.form),
       agari: agariValue(num(h.agari)),
       jockey: five(h.jrank),
       dist: five(h.dist),
@@ -678,7 +678,7 @@ function detailHtml(x) {
       <b>${p.finish === undefined ? '—' : p.finish === '中' ? '中止' : p.finish + '着'}</b>${p.field ? `/${p.field}頭` : ''}${p.pop ? ` ${p.pop}人` : ''}
       ${p.margin !== undefined ? `<span class="muted">${p.finish === 1 ? '+' : ''}${p.margin}秒</span>` : ''}
       ${p.agari ? `上り${p.agari}${p.agariRank ? `(${p.agariRank}位)` : ''}` : ''}${p.pos4 ? ` 4角${esc(p.pos4)}` : ''}${p.si ? ` <b>S${p.si}</b>` : ''}${p.weight ? ` ${p.weight}kg` : ''}${p.jockey ? ` <span class="muted">${esc(p.jockey)} ${p.kg ?? ''}</span>` : ''}</li>`).join('');
-  const prof = [h.sexAge, h.sire ? `父${h.sire}` : '', h.stable, h.record ? `通算${h.record}` : '', h.style ? `脚質:${h.style}` : '', h.rt ? `RT${h.rt}` : '', h.cpu ? `CPU${h.cpu}` : '']
+  const prof = [h.sexAge, h.blinker ? 'ブリンカー' : '', h.sire ? `父${h.sire}` : '', h.stable, h.record ? `通算${h.record}` : '', h.style ? `脚質:${h.style}` : '', h.rt ? `RT${h.rt}` : '', h.cpu ? `CPU${h.cpu}` : '']
     .filter(Boolean).map(esc).join('　');
   const f = x.v || {};
   const factor = (label, v) => `<span class="chip">${label} <b>${Math.round((v ?? 0.5) * 100)}</b></span>`;
@@ -794,7 +794,7 @@ function applyRaceInfo(info) {
   });
 }
 
-const IMPORT_FIELDS = ['oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
+const IMPORT_FIELDS = ['formAdj', 'blinker', 'oddsApprox', 'oddsKind', 'rt', 'si', 'cpu', 'style', 'sexAge', 'stable', 'record', 'sire', 'form', 'agari', 'weeks', 'dist', 'course', 'mud', 'train', 'trainNote', 'trainHits', 'comment', 'camp', 'campHits', 'odds', 'place', 'pop', 'past'];
 
 function applyImport(res) {
   let added = 0, updated = 0;
@@ -982,6 +982,8 @@ function init() {
     } else {
       h[f] = NUM_FIELDS.has(f) ? num(el.value) : el.value;
       if (f === 'odds') { h.oddsApprox = false; h.oddsKind = ''; }
+      if (f === 'form') h.formAdj = null; // 手で直したら着順だけで評価
+
     }
     touch();
   };

@@ -62,7 +62,7 @@ const KB = (() => {
       }
       // 2) 「(枠) 馬番 馬名 …」または「馬名」だけの行
       const m = line.match(/^(?:(\d{1,2})\s*)?(?:(\d{1,2})\s*)?(?:[◎○◯▲△☆×注✓\s]*)([ァ-ヶー]{2,9})(?=$|[\s(（□◇*外地父市])/);
-      if (m && isName(m[3])) {
+      if (m && isName(m[3]) && !/追走|先行|先着|同入|遅れ|併せ/.test(line)) {
         let num = m[2] ? +m[2] : m[1] ? +m[1] : null;
         if (num === null) {
           // 直前の行が数字だけなら馬番とみなす
@@ -262,18 +262,27 @@ const KB = (() => {
   /* ---------------- 調教 ---------------- */
 
   const TRAIN_WORDS = [
-    [/絶好|抜群|文句なし|申し分ない|素晴らしい/, 3],
-    [/好調|好気配|上昇|良化(?!途上)|状態(?:は)?良|仕上がり(?:良|上々|万全)|気配上々|活気|デキ(?:良|上々)/, 2],
-    [/軽快|鋭い|鋭く|切れ|伸び(?:良|鋭)|力強|迫力|余力(?:十分|残し|あり)|楽に|反応良|動き良|好時計|自己ベスト/, 1.5],
-    [/順調|好調(?:持続|維持|キープ)|平行線|変わりなく|まずまず|悪くない/, 0.5],
-    [/平凡|物足りな|もう一息|一息|案外|地味|ひと息/, -1.5],
-    [/重い|鈍い|鈍く|硬い|反応(?:鈍|悪)|モタ|太め|重め残|良化途上|息遣い|まだ(?:緩|重)/, -2],
-    [/不安|疲れ|落ち|下降|覇気(?:がない|なし|に欠)|元気がない|ズブ/, -2.5],
+    [/絶好|抜群|文句(?:ない|なし)|申し分ない|素晴らしい|万全|見せつけ/, 3],
+    [/好調|好気配|上昇|良化(?!途上)|好仕上|仕上がり(?:は)?(?:良|上々|いい|万全)|仕上がって|仕上がっている|気配上々|気合乗り上々|活気|デキ(?:良|上々)|上々|心身好調|態勢良好|元気一杯|スピード感|手応え(?:も)?十分/, 2],
+    [/軽快|鋭い|鋭く|鋭さ|切れ|伸び(?:良|鋭)|力強|迫力(?!という点)|余力(?:十分|残し|あり)|楽に|反応(?:良|が良)|動き(?:は)?良|好時計|自己ベスト|シャープ|機敏|素軽|キビキビ|グイグイ|スムーズ/, 1.5],
+    [/順調|好調(?:持続|維持|キープ)|平行線|変わり(?:なく|ない|なかった)|まずまず|悪くない|合格点|この馬なり|元気(?!一杯|がない)|落ち着き|少々好転|いつも(?:こんな|通り|どおり)/, 0.5],
+    [/平凡|物足りな|もう一息|一息(?!入)|ひと息|案外|地味|及ばない|程度か|(?:いい|良い|上々)が$/, -1.5],
+    [/重い|鈍い|鈍く|硬い|反応(?:鈍|悪)|モタ|太め|重め残|良化途上|まだ(?:緩|重)|散漫|浮つ/, -2],
+    [/不安|疲れ|落ち(?!着)|下降|覇気(?:がない|なし|に欠)|元気がない|ズブ/, -2.5],
   ];
 
+  /** 「太め感もない」「疲労を残さないように」など否定の言い回しを除く */
+  const stripNegations = t => t
+    .replace(/(太め|疲れ|疲労|不安|重め)(?:感)?(?:も|は|を)?(?:ない|なく|なし|残さない|残さず)/g, '')
+    .replace(/(悪く|重く)ない/g, '悪くない')
+    .replace(/(?:一息|ひと息)入る/g, '休み明け')
+    .replace(/重い馬場|重馬場|荒れ馬場|重たい馬場/g, '馬場')
+    .replace(/(?:いくらか|多少|少し|やや)(?:良化|上向)\S*?(?=[。、]|$)/g, '少々好転');
+
   function parseTrain(block) {
+    if (/攻め解説|\(前回\)/.test(block.body)) return parseKbTrain(block);
     const body = block.body.replace(block.name, '');
-    const { s: ws, hits } = sentiment(body, TRAIN_WORDS);
+    const { s: ws, hits } = sentiment(stripNegations(body), TRAIN_WORDS);
     let s = ws;
 
     // 併せ馬の結果
@@ -312,6 +321,105 @@ const KB = (() => {
       .join(' / ')
       .slice(0, 140);
     return { train, trainNote: note, trainHits: hits.join(' ') };
+  }
+
+  /* ---------- 競馬ブック 調教ページ専用 ---------- */
+
+  // 「津村明 11/18 美W 不 馬なり余力」のような追い切りの見出し
+  const SESSION = /^(\S+)\s+(\d{1,2})\/(\d{1,2})\s+(\S+?)\s+(良|稍|重|不)\s*(.*)$/;
+  const PARTNER = /(追走|先行|併せ|の内|の外)[^\n]*?(?:(\d+\.\d)秒)?(先着|同入|遅れ)/;
+
+  function trackKind(course) {
+    if (/坂/.test(course)) return 'hill';
+    return 'flat'; // W・CW・芝・ダ・ポリ等
+  }
+
+  /** 1F（ラスト1ハロン）の評価。コース種別・馬場で基準を変える */
+  function oneFScore(t, kind, going) {
+    const adj = going === '重' || going === '不' ? 0.2 : going === '稍' ? 0.1 : 0;
+    const x = t - adj;
+    const th = kind === 'hill' ? [12.0, 12.5, 13.0, 13.5] : [11.3, 11.6, 11.9, 12.2];
+    if (x <= th[0]) return 1.5;
+    if (x <= th[1]) return 1;
+    if (x <= th[2]) return 0.4;
+    if (x <= th[3]) return 0;
+    return -0.5;
+  }
+
+  function parseKbTrain(block) {
+    const lines = block.body.split('\n').map(l => l.trim()).filter(Boolean);
+    // 見出し：「1 カラマティアノス 気合乗り上々 ↗」
+    const hm = lines[0].match(new RegExp(`${block.name}\\s*(.*?)\\s*([↑↗→↘↓])?$`));
+    const tanpyo = hm ? hm[1].trim() : '';
+    const arrow = hm && hm[2] ? hm[2] : '';
+    const ai = lines.findIndex(l => l === '攻め解説');
+    const kaisetsu = ai >= 0 ? lines.slice(ai + 1).filter(l => !/^\d{1,2}$/.test(l)).join('') : '';
+
+    // 追い切りごとに分ける（(前回) は今回の評価から除外）
+    const sessions = [];
+    let cur = null;
+    lines.slice(1, ai >= 0 ? ai : undefined).forEach(l => {
+      const m = l.match(SESSION);
+      if (m) {
+        cur = { rider: m[1], date: `${m[2]}/${m[3]}`, course: m[4], going: m[5], intensity: m[6].trim(), prev: m[1] === '(前回)', times: [], partner: null };
+        sessions.push(cur);
+        return;
+      }
+      if (!cur) return;
+      const pm = l.match(PARTNER);
+      if (pm && /[ぁ-んァ-ヶ一-龠]/.test(l)) { cur.partner = { text: l, result: pm[3], margin: pm[2] ? +pm[2] : 0 }; return; }
+      const ts = (l.match(/\d{1,3}\.\d/g) || []).map(Number);
+      if (ts.length) cur.times = ts;
+    });
+    const now = sessions.filter(x => !x.prev);
+
+    const hits = [];
+    let score = 0;
+    // 短評（記者のまとめ）は重め
+    const st = sentiment(stripNegations(tanpyo), TRAIN_WORDS);
+    score += st.s * 1.3;
+    st.hits.forEach(h => hits.push('短評' + h));
+    // 攻め解説
+    const ks = sentiment(stripNegations(kaisetsu), TRAIN_WORDS);
+    score += ks.s * 0.6;
+    hits.push(...ks.hits);
+    // 矢印
+    if (arrow) {
+      const a = { '↑': 2.5, '↗': 1.5, '→': 0, '↘': -1.5, '↓': -2.5 }[arrow];
+      score += a;
+      hits.push(arrow);
+    }
+    // 時計（今回の追い切りのラスト1F：最も良い1本と最終追い切りの平均）
+    const sc = now.map(x => {
+      const t1 = x.times[x.times.length - 1];
+      return t1 && t1 < 15 ? oneFScore(t1, trackKind(x.course), x.going) : null;
+    });
+    const valid = sc.filter(v => v !== null);
+    if (valid.length) {
+      const best = Math.max(...valid);
+      const last = sc[sc.length - 1] ?? best;
+      const t = (best + last) / 2;
+      score += t;
+      const lastS = now[now.length - 1];
+      hits.push(`時計${t >= 0 ? '+' : ''}${t.toFixed(1)}`);
+      if (lastS) hits.push(`最終 ${lastS.date} ${lastS.course}(${lastS.going}) ${lastS.intensity} 1F${lastS.times[lastS.times.length - 1] ?? '-'}`);
+    }
+    // 併せ馬
+    now.forEach(x => {
+      if (!x.partner) return;
+      const r = x.partner.result;
+      const v = r === '先着' ? 1 : r === '同入' ? 0.3 : (/アタマ|クビ|ハナ/.test(x.partner.text) ? -0.5 : -1);
+      score += v;
+      hits.push(`併せ${r}${x.partner.margin ? x.partner.margin + '秒' : ''}`);
+    });
+
+    const train = score >= 6 ? 'A' : score >= 2.5 ? 'B' : score >= -1.5 ? 'C' : 'D';
+    return {
+      train,
+      trainScore: Math.round(score * 10) / 10,
+      trainNote: [tanpyo + (arrow ? ' ' + arrow : ''), kaisetsu].filter(Boolean).join(' / ').slice(0, 200),
+      trainHits: hits.join(' '),
+    };
   }
 
   /* ---------------- 厩舎コメント ---------------- */
